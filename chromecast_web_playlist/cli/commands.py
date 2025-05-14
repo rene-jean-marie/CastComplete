@@ -1,0 +1,424 @@
+#!/usr/bin/env python3
+"""
+CLI Commands
+Command-line interface for the Chromecast Web Playlist Manager
+"""
+
+import os
+import sys
+import argparse
+import logging
+from typing import Dict, List, Optional, Any, Union
+
+from ..core.chromecast_manager import ChromecastManager
+from ..extractors.media_extractor import extract_media, extract_x_feed
+
+# Configure logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+class CLI:
+    """
+    Command-line interface for the Chromecast Web Playlist Manager.
+    """
+    
+    def __init__(self):
+        """Initialize the CLI."""
+        self.chromecast_manager = ChromecastManager()
+        self.parser = self._create_parser()
+        
+    def _create_parser(self):
+        """Create the argument parser."""
+        parser = argparse.ArgumentParser(
+            description="Chromecast Web Playlist Manager CLI",
+            formatter_class=argparse.RawDescriptionHelpFormatter
+        )
+        
+        subparsers = parser.add_subparsers(dest="command", help="Command to execute")
+        
+        # Devices commands
+        devices_parser = subparsers.add_parser("devices", help="List available Chromecast devices")
+        
+        connect_parser = subparsers.add_parser("connect", help="Connect to a Chromecast device")
+        connect_parser.add_argument("device", help="Name of the device to connect to")
+        
+        disconnect_parser = subparsers.add_parser("disconnect", help="Disconnect from a Chromecast device")
+        disconnect_parser.add_argument("device", nargs="?", help="Name of the device to disconnect from (optional)")
+        
+        # Device group commands
+        groups_parser = subparsers.add_parser("groups", help="List device groups")
+        
+        create_group_parser = subparsers.add_parser("create-group", help="Create a device group")
+        create_group_parser.add_argument("name", help="Name of the group")
+        create_group_parser.add_argument("devices", nargs="*", help="Names of devices to add to the group")
+        
+        delete_group_parser = subparsers.add_parser("delete-group", help="Delete a device group")
+        delete_group_parser.add_argument("name", help="Name of the group")
+        
+        add_to_group_parser = subparsers.add_parser("add-to-group", help="Add a device to a group")
+        add_to_group_parser.add_argument("group", help="Name of the group")
+        add_to_group_parser.add_argument("devices", nargs="+", help="Names of devices to add")
+        
+        remove_from_group_parser = subparsers.add_parser("remove-from-group", help="Remove a device from a group")
+        remove_from_group_parser.add_argument("group", help="Name of the group")
+        remove_from_group_parser.add_argument("devices", nargs="+", help="Names of devices to remove")
+        
+        sync_group_parser = subparsers.add_parser("sync-group", help="Synchronize playback across devices in a group")
+        sync_group_parser.add_argument("name", help="Name of the group")
+        
+        # Playlist commands
+        playlists_parser = subparsers.add_parser("playlists", help="List available playlists")
+        
+        create_parser = subparsers.add_parser("create", help="Create a new playlist")
+        create_parser.add_argument("name", help="Name of the playlist")
+        
+        delete_parser = subparsers.add_parser("delete", help="Delete a playlist")
+        delete_parser.add_argument("name", help="Name of the playlist")
+        
+        view_parser = subparsers.add_parser("view", help="View playlist contents")
+        view_parser.add_argument("name", help="Name of the playlist")
+        
+        add_parser = subparsers.add_parser("add", help="Add media to a playlist")
+        add_parser.add_argument("playlist", help="Name of the playlist")
+        add_parser.add_argument("url", help="URL of the media")
+        add_parser.add_argument("--title", help="Title of the media")
+        add_parser.add_argument("--extract", action="store_true", help="Extract media from web page")
+        add_parser.add_argument("--validate", action="store_true", help="Validate media URL")
+        
+        remove_parser = subparsers.add_parser("remove", help="Remove an item from a playlist")
+        remove_parser.add_argument("playlist", help="Name of the playlist")
+        remove_parser.add_argument("index", type=int, help="Index of the item to remove")
+        
+        # Extract commands
+        extract_parser = subparsers.add_parser("extract", help="Extract media from a URL")
+        extract_parser.add_argument("url", help="URL to extract media from")
+        extract_parser.add_argument("--save", help="Save extracted media to a playlist")
+        extract_parser.add_argument("--scroll", type=int, default=5, help="Number of times to scroll (for X feeds)")
+        
+        # Playback commands
+        load_parser = subparsers.add_parser("load", help="Load a playlist")
+        load_parser.add_argument("name", help="Name of the playlist")
+        load_parser.add_argument("--device", help="Target device")
+        load_parser.add_argument("--group", help="Target device group")
+        
+        play_parser = subparsers.add_parser("play", help="Start playback")
+        play_parser.add_argument("--device", help="Target device")
+        play_parser.add_argument("--group", help="Target device group")
+        
+        pause_parser = subparsers.add_parser("pause", help="Pause playback")
+        pause_parser.add_argument("--device", help="Target device")
+        pause_parser.add_argument("--group", help="Target device group")
+        
+        resume_parser = subparsers.add_parser("resume", help="Resume playback")
+        resume_parser.add_argument("--device", help="Target device")
+        resume_parser.add_argument("--group", help="Target device group")
+        
+        stop_parser = subparsers.add_parser("stop", help="Stop playback")
+        stop_parser.add_argument("--device", help="Target device")
+        stop_parser.add_argument("--group", help="Target device group")
+        
+        next_parser = subparsers.add_parser("next", help="Play next track")
+        next_parser.add_argument("--device", help="Target device")
+        next_parser.add_argument("--group", help="Target device group")
+        
+        prev_parser = subparsers.add_parser("prev", help="Play previous track")
+        prev_parser.add_argument("--device", help="Target device")
+        prev_parser.add_argument("--group", help="Target device group")
+        
+        # Web server command
+        server_parser = subparsers.add_parser("server", help="Start the web server")
+        server_parser.add_argument("--host", default="0.0.0.0", help="Host to bind to")
+        server_parser.add_argument("--port", type=int, default=5001, help="Port to bind to")
+        server_parser.add_argument("--debug", action="store_true", help="Run in debug mode")
+        
+        return parser
+        
+    def _resolve_target(self, args):
+        """
+        Resolve the target device or group from command-line arguments.
+        
+        Args:
+            args: Command-line arguments
+            
+        Returns:
+            Target device or group name, or None
+        """
+        if hasattr(args, "device") and args.device:
+            return args.device
+        elif hasattr(args, "group") and args.group:
+            if args.group in self.chromecast_manager.device_groups:
+                return self.chromecast_manager.device_groups[args.group]
+            else:
+                logger.error(f"Group {args.group} does not exist")
+                return None
+        else:
+            return None
+        
+    def run(self, args=None):
+        """
+        Run the CLI with the given arguments.
+        
+        Args:
+            args: Command-line arguments (optional)
+        """
+        if args is None:
+            args = self.parser.parse_args()
+        else:
+            args = self.parser.parse_args(args)
+            
+        if not args.command:
+            self.parser.print_help()
+            return
+            
+        # Device commands
+        if args.command == "devices":
+            devices = self.chromecast_manager.discover_devices()
+            if devices:
+                print("Available devices:")
+                for device in devices:
+                    print(f"  - {device}")
+            else:
+                print("No devices found")
+                
+        elif args.command == "connect":
+            success = self.chromecast_manager.connect(args.device)
+            if success:
+                print(f"Connected to {args.device}")
+            else:
+                print(f"Failed to connect to {args.device}")
+                
+        elif args.command == "disconnect":
+            success = self.chromecast_manager.disconnect(args.device)
+            if success:
+                if args.device:
+                    print(f"Disconnected from {args.device}")
+                else:
+                    print("Disconnected from all devices")
+            else:
+                print("Failed to disconnect")
+                
+        # Device group commands
+        elif args.command == "groups":
+            groups = self.chromecast_manager.get_device_groups()
+            if groups:
+                print("Device groups:")
+                for name, devices in groups.items():
+                    print(f"  - {name}: {', '.join(devices)}")
+            else:
+                print("No device groups")
+                
+        elif args.command == "create-group":
+            success = self.chromecast_manager.create_device_group(args.name, args.devices)
+            if success:
+                print(f"Created group {args.name}")
+            else:
+                print(f"Failed to create group {args.name}")
+                
+        elif args.command == "delete-group":
+            success = self.chromecast_manager.delete_device_group(args.name)
+            if success:
+                print(f"Deleted group {args.name}")
+            else:
+                print(f"Failed to delete group {args.name}")
+                
+        elif args.command == "add-to-group":
+            success = True
+            for device in args.devices:
+                if not self.chromecast_manager.add_to_device_group(args.group, device):
+                    success = False
+                    print(f"Failed to add {device} to group {args.group}")
+            if success:
+                print(f"Added devices to group {args.group}")
+                
+        elif args.command == "remove-from-group":
+            success = True
+            for device in args.devices:
+                if not self.chromecast_manager.remove_from_device_group(args.group, device):
+                    success = False
+                    print(f"Failed to remove {device} from group {args.group}")
+            if success:
+                print(f"Removed devices from group {args.group}")
+                
+        elif args.command == "sync-group":
+            success = self.chromecast_manager.sync_device_group(args.name)
+            if success:
+                print(f"Synchronized group {args.name}")
+            else:
+                print(f"Failed to synchronize group {args.name}")
+                
+        # Playlist commands
+        elif args.command == "playlists":
+            playlists = self.chromecast_manager.get_playlists()
+            if playlists:
+                print("Available playlists:")
+                for playlist in playlists:
+                    print(f"  - {playlist}")
+            else:
+                print("No playlists")
+                
+        elif args.command == "create":
+            success = self.chromecast_manager.create_playlist(args.name)
+            if success:
+                print(f"Created playlist {args.name}")
+            else:
+                print(f"Failed to create playlist {args.name}")
+                
+        elif args.command == "delete":
+            success = self.chromecast_manager.delete_playlist(args.name)
+            if success:
+                print(f"Deleted playlist {args.name}")
+            else:
+                print(f"Failed to delete playlist {args.name}")
+                
+        elif args.command == "view":
+            playlist = self.chromecast_manager.get_playlist(args.name)
+            if playlist:
+                print(f"Playlist: {args.name}")
+                for i, item in enumerate(playlist):
+                    print(f"  {i}. {item['title']} ({item['url']})")
+            else:
+                print(f"Playlist {args.name} not found")
+                
+        elif args.command == "add":
+            if args.extract:
+                # Extract media from URL
+                result = extract_media(args.url)
+                if result["media_urls"]:
+                    for media in result["media_urls"]:
+                        title = args.title or result["title"]
+                        success = self.chromecast_manager.add_to_playlist(args.playlist, media["url"], title)
+                        if success:
+                            print(f"Added {media['url']} to playlist {args.playlist}")
+                        else:
+                            print(f"Failed to add {media['url']} to playlist {args.playlist}")
+                else:
+                    print(f"No media found at {args.url}")
+            else:
+                # Add URL directly
+                success = self.chromecast_manager.add_to_playlist(args.playlist, args.url, args.title)
+                if success:
+                    print(f"Added {args.url} to playlist {args.playlist}")
+                else:
+                    print(f"Failed to add {args.url} to playlist {args.playlist}")
+                    
+        elif args.command == "remove":
+            success = self.chromecast_manager.remove_from_playlist(args.playlist, args.index)
+            if success:
+                print(f"Removed item {args.index} from playlist {args.playlist}")
+            else:
+                print(f"Failed to remove item {args.index} from playlist {args.playlist}")
+                
+        # Extract commands
+        elif args.command == "extract":
+            if "twitter.com" in args.url or "x.com" in args.url:
+                if "/status/" not in args.url:
+                    # Extract from X feed
+                    results = extract_x_feed(args.url, args.scroll)
+                    if results:
+                        print(f"Extracted {len(results)} videos from X feed")
+                        for i, result in enumerate(results):
+                            print(f"  {i}. {result['title']}")
+                            if args.save:
+                                for media in result["media_urls"]:
+                                    success = self.chromecast_manager.add_to_playlist(args.save, media["url"], result["title"])
+                                    if success:
+                                        print(f"    Added to playlist {args.save}")
+                    else:
+                        print("No videos found in X feed")
+                else:
+                    # Extract from X post
+                    result = extract_media(args.url)
+                    if result["media_urls"]:
+                        print(f"Extracted {len(result['media_urls'])} media URLs from {args.url}")
+                        for i, media in enumerate(result["media_urls"]):
+                            print(f"  {i}. {media['url']}")
+                            if args.save:
+                                success = self.chromecast_manager.add_to_playlist(args.save, media["url"], result["title"])
+                                if success:
+                                    print(f"    Added to playlist {args.save}")
+                    else:
+                        print(f"No media found at {args.url}")
+            else:
+                # Extract from web page
+                result = extract_media(args.url)
+                if result["media_urls"]:
+                    print(f"Extracted {len(result['media_urls'])} media URLs from {args.url}")
+                    for i, media in enumerate(result["media_urls"]):
+                        print(f"  {i}. {media['url']}")
+                        if args.save:
+                            success = self.chromecast_manager.add_to_playlist(args.save, media["url"], result["title"])
+                            if success:
+                                print(f"    Added to playlist {args.save}")
+                else:
+                    print(f"No media found at {args.url}")
+                    
+        # Playback commands
+        elif args.command == "load":
+            target = self._resolve_target(args)
+            success = self.chromecast_manager.load_playlist(args.name, target)
+            if success:
+                print(f"Loaded playlist {args.name}")
+            else:
+                print(f"Failed to load playlist {args.name}")
+                
+        elif args.command == "play":
+            target = self._resolve_target(args)
+            success = self.chromecast_manager.play(target)
+            if success:
+                print("Playback started")
+            else:
+                print("Failed to start playback")
+                
+        elif args.command == "pause":
+            target = self._resolve_target(args)
+            success = self.chromecast_manager.pause(target)
+            if success:
+                print("Playback paused")
+            else:
+                print("Failed to pause playback")
+                
+        elif args.command == "resume":
+            target = self._resolve_target(args)
+            success = self.chromecast_manager.resume(target)
+            if success:
+                print("Playback resumed")
+            else:
+                print("Failed to resume playback")
+                
+        elif args.command == "stop":
+            target = self._resolve_target(args)
+            success = self.chromecast_manager.stop(target)
+            if success:
+                print("Playback stopped")
+            else:
+                print("Failed to stop playback")
+                
+        elif args.command == "next":
+            target = self._resolve_target(args)
+            success = self.chromecast_manager.next(target)
+            if success:
+                print("Playing next track")
+            else:
+                print("Failed to play next track")
+                
+        elif args.command == "prev":
+            target = self._resolve_target(args)
+            success = self.chromecast_manager.previous(target)
+            if success:
+                print("Playing previous track")
+            else:
+                print("Failed to play previous track")
+                
+        # Web server command
+        elif args.command == "server":
+            from ..web import run_server
+            print(f"Starting web server on {args.host}:{args.port}")
+            run_server(args.host, args.port, args.debug)
+            
+def main():
+    """Main entry point for the CLI."""
+    cli = CLI()
+    cli.run()
+    
+if __name__ == "__main__":
+    main()

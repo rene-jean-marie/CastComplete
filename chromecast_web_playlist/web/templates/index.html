@@ -1,0 +1,1972 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Chromecast Web Server Playlist Manager</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.1/font/bootstrap-icons.css">
+    <link href="/static/custom.css" rel="stylesheet">
+    <!-- HLS.js for HLS playback support -->
+    <script src="https://cdn.jsdelivr.net/npm/hls.js@latest"></script>
+    <style>
+        body {
+            padding-top: 20px;
+            padding-bottom: 60px;
+            background-color: #f8f9fa;
+        }
+        .card {
+            margin-bottom: 20px;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+        }
+        .playlist-item {
+            cursor: pointer;
+            transition: background-color 0.2s;
+        }
+        .playlist-item:hover {
+            background-color: #f0f0f0;
+        }
+        .playlist-item.active {
+            background-color: #e9ecef;
+        }
+        .control-btn {
+            margin: 0 5px;
+        }
+        .now-playing {
+            background-color: #d1e7dd;
+        }
+        #status-bar {
+            position: fixed;
+            bottom: 0;
+            left: 0;
+            right: 0;
+            padding: 10px;
+            background-color: #343a40;
+            color: white;
+            z-index: 1000;
+        }
+        
+        #video-player-container {
+            display: none;
+            margin-bottom: 20px;
+        }
+        
+        /* Mobile-specific styles */
+        @media (max-width: 768px) {
+            .btn {
+                /* Ensure buttons are properly sized and clickable on mobile */
+                min-height: 44px;
+                touch-action: manipulation;
+                -webkit-appearance: none;
+                appearance: none;
+                -webkit-user-select: none;
+                -moz-user-select: none;
+                -ms-user-select: none;
+                user-select: none;
+            }
+            
+            #discover-btn, #register-client-btn {
+                /* Ensure these buttons are always enabled and visible */
+                opacity: 1 !important;
+                pointer-events: auto !important;
+                cursor: pointer !important;
+                display: inline-block !important;
+                background-color: var(--bs-primary) !important;
+                color: white !important;
+            }
+            
+            /* Improve touch targets */
+            .form-select, .form-control {
+                min-height: 44px;
+            }
+            
+            /* Ensure proper spacing on mobile */
+            .mb-2 {
+                margin-bottom: 0.75rem !important;
+            }
+        }
+        
+        #video-player {
+            width: 100%;
+            max-height: 500px;
+            background-color: #000;
+        }
+        
+        .playback-mode-toggle {
+            margin-bottom: 20px;
+        }
+        
+        .upload-container {
+            margin-bottom: 20px;
+        }
+        
+        .progress {
+            margin-top: 10px;
+            display: none;
+        }
+        
+        .progress-bar {
+            width: 0%;
+        }
+        .media-controls {
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            padding: 15px;
+            background-color: #f8f9fa;
+            border-radius: 5px;
+            margin-bottom: 20px;
+        }
+        .media-controls button {
+            margin: 0 10px;
+        }
+        .btn-circle {
+            width: 50px;
+            height: 50px;
+            border-radius: 25px;
+            text-align: center;
+            padding: 0;
+            font-size: 24px;
+            line-height: 1;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        .btn-lg-circle {
+            width: 60px;
+            height: 60px;
+            border-radius: 30px;
+            font-size: 28px;
+        }
+        #playlist-items {
+            max-height: 400px;
+            overflow-y: auto;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1 class="text-center mb-4">Chromecast Web Server Playlist Manager</h1>
+        
+        <!-- Playback Mode Toggle -->
+        <div class="card playback-mode-toggle">
+            <div class="card-header bg-dark text-white">
+                <h5 class="mb-0">Playback Mode</h5>
+            </div>
+            <div class="card-body">
+                <div class="form-check form-check-inline">
+                    <input class="form-check-input" type="radio" name="playbackMode" id="chromecastMode" value="chromecast" checked>
+                    <label class="form-check-label" for="chromecastMode">Chromecast</label>
+                </div>
+                <div class="form-check form-check-inline">
+                    <input class="form-check-input" type="radio" name="playbackMode" id="webMode" value="web">
+                    <label class="form-check-label" for="webMode">Web Player</label>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Video Player -->
+        <div id="video-player-container" class="card">
+            <div class="card-header bg-dark text-white">
+                <h5 class="mb-0">Video Player</h5>
+            </div>
+            <div class="card-body p-0">
+                <video id="video-player" controls>
+                    Your browser does not support the video tag.
+                </video>
+            </div>
+        </div>
+        
+        <!-- File Upload -->
+        <div id="upload-container" class="card upload-container">
+            <div class="card-header bg-secondary text-white">
+                <h5 class="mb-0">Upload Media</h5>
+            </div>
+            <div class="card-body">
+                <form id="upload-form" enctype="multipart/form-data">
+                    <div class="input-group mb-3">
+                        <input type="file" class="form-control" id="file-input" accept="video/*,audio/*,text/plain" aria-label="Select media file or URL list to upload" title="Select media file or URL list to upload">
+                        <button class="btn btn-primary" type="submit" id="upload-btn">
+                            <i class="bi bi-cloud-upload"></i> Upload
+                        </button>
+                    </div>
+                    <div class="form-check form-check-inline mb-3">
+                        <input class="form-check-input" type="radio" name="uploadType" id="mediaUpload" value="media" checked>
+                        <label class="form-check-label" for="mediaUpload">Media File</label>
+                    </div>
+                    <div class="form-check form-check-inline mb-3">
+                        <input class="form-check-input" type="radio" name="uploadType" id="urlListUpload" value="urlList">
+                        <label class="form-check-label" for="urlListUpload">URL List (.txt)</label>
+                    </div>
+                    <div id="urlListOptions" class="mb-3 d-none">
+                        <select id="playlist-select-for-urls" class="form-select mb-2" aria-label="Select playlist for URLs">
+                            <option value="">Select playlist to add URLs to</option>
+                        </select>
+                    </div>
+                    <div class="progress">
+                        <div class="progress-bar" role="progressbar" aria-valuenow="0" aria-valuemin="0" aria-valuemax="100"></div>
+                    </div>
+                </form>
+                <div id="upload-status" class="mt-2"></div>
+            </div>
+        </div>
+        
+        <!-- Device & Group Management -->
+        <div class="card mb-3">
+            <div class="card-header bg-primary text-white">
+                <h5 class="mb-0">Device & Group Management</h5>
+            </div>
+            <div class="card-body">
+                <div class="row">
+                    <div class="col-md-4">
+                        <div class="d-flex mb-2">
+                            <button id="discover-btn" class="btn btn-primary me-2">
+                                <i class="bi bi-search"></i> Discover Devices
+                            </button>
+                            <button id="register-client-btn" class="btn btn-outline-success">
+                                <i class="bi bi-laptop"></i> Register This Device
+                            </button>
+                        </div>
+                        <select id="device-select" class="form-select mb-2" multiple size="5" aria-label="Select devices">
+                            <option value="">Select device(s)</option>
+                        </select>
+                        <div class="d-flex mb-2">
+                            <button id="connect-btn" class="btn btn-success me-2" disabled>
+                                <i class="bi bi-cast"></i> Connect Selected
+                            </button>
+                            <button id="disconnect-btn" class="btn btn-danger" disabled>
+                                <i class="bi bi-x-circle"></i> Disconnect
+                            </button>
+                        </div>
+                        <div id="connection-status" class="alert alert-secondary">
+                            Not connected
+                        </div>
+                        <div id="client-status" class="alert alert-info d-none">
+                            This device: <span id="client-name">Not registered</span>
+                            <button id="unregister-client-btn" class="btn btn-sm btn-outline-danger float-end d-none">
+                                Unregister
+                            </button>
+                        </div>
+                    </div>
+                    <div class="col-md-4">
+                        <div class="d-flex justify-content-between align-items-center mb-2">
+                            <h6 class="mb-0">Device Groups</h6>
+                            <button id="refresh-groups-btn" class="btn btn-sm btn-outline-secondary" title="Refresh groups">
+                                <i class="bi bi-arrow-clockwise"></i>
+                            </button>
+                        </div>
+                        <select id="group-select" class="form-select mb-2" size="5" aria-label="Select device group">
+                            <option value="">No groups</option>
+                        </select>
+                        <input type="text" id="new-group-name" class="form-control mb-2" placeholder="New group name">
+                        <button id="create-group-btn" class="btn btn-outline-primary btn-sm mb-1">Create Group</button>
+                        <button id="delete-group-btn" class="btn btn-outline-danger btn-sm mb-1" disabled>Delete Group</button>
+                        <button id="add-to-group-btn" class="btn btn-outline-success btn-sm mb-1" disabled>Add Device(s) to Group</button>
+                        <button id="remove-from-group-btn" class="btn btn-outline-warning btn-sm mb-1" disabled>Remove Device(s) from Group</button>
+                    </div>
+                    <div class="col-md-4">
+                        <h6>Playback Target</h6>
+                        <select id="target-select" class="form-select mb-2" aria-label="Select playback target">
+                            <option value="">Select device or group</option>
+                        </select>
+                        <div id="per-device-status" class="mt-2"></div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Media Controls -->
+        <div class="card">
+            <div class="card-header bg-success text-white">
+                <h5 class="mb-0">Media Controls</h5>
+            </div>
+            <div class="card-body">
+                <div class="media-controls">
+                    <button id="prev-btn" class="btn btn-outline-secondary btn-circle" disabled aria-label="Previous track" title="Previous track">
+                        <i class="bi bi-skip-backward-fill"></i>
+                    </button>
+                    <button id="play-btn" class="btn btn-primary btn-lg-circle" disabled aria-label="Play" title="Play">
+                        <i class="bi bi-play-fill"></i>
+                    </button>
+                    <button id="pause-btn" class="btn btn-warning btn-circle" disabled aria-label="Pause" title="Pause">
+                        <i class="bi bi-pause-fill"></i>
+                    </button>
+                    <button id="stop-btn" class="btn btn-danger btn-circle" disabled aria-label="Stop" title="Stop">
+                        <i class="bi bi-stop-fill"></i>
+                    </button>
+                    <button id="next-btn" class="btn btn-outline-secondary btn-circle" disabled aria-label="Next track" title="Next track">
+                        <i class="bi bi-skip-forward-fill"></i>
+                    </button>
+                </div>
+                <div id="now-playing" class="alert alert-info text-center">
+                    Nothing playing
+                </div>
+            </div>
+        </div>
+        
+        <!-- Playlist Management -->
+        <div class="row">
+            <!-- Playlists -->
+            <div class="col-md-6">
+                <div class="card">
+                    <div class="card-header bg-info text-white d-flex justify-content-between align-items-center">
+                        <h5 class="mb-0">Playlists</h5>
+                        <button id="refresh-playlists-btn" class="btn btn-sm btn-outline-light" title="Refresh playlists">
+                            <i class="bi bi-arrow-clockwise"></i>
+                        </button>
+                    </div>
+                    <div class="card-body">
+                        <div class="input-group mb-3">
+                            <input type="text" id="new-playlist-name" class="form-control" placeholder="New playlist name">
+                            <button id="create-playlist-btn" class="btn btn-outline-primary">
+                                <i class="bi bi-plus-circle"></i> Create
+                            </button>
+                        </div>
+                        <ul id="playlist-list" class="list-group">
+                            <li class="list-group-item text-center">No playlists available</li>
+                        </ul>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- Playlist Items -->
+            <div class="col-md-6">
+                <div class="card">
+                    <div class="card-header bg-warning text-dark">
+                        <h5 class="mb-0">Playlist Items</h5>
+                    </div>
+                    <div class="card-body">
+                        <div id="playlist-header" class="alert alert-secondary">
+                            No playlist selected
+                        </div>
+                        <div class="input-group mb-3">
+                            <input type="text" id="media-url" class="form-control" placeholder="Media URL" disabled>
+                            <input type="text" id="media-title" class="form-control" placeholder="Title (optional)" disabled>
+                            <button id="add-media-btn" class="btn btn-outline-success" disabled>
+                                <i class="bi bi-plus-circle"></i> Add
+                            </button>
+                        </div>
+                        <ul id="playlist-items" class="list-group">
+                            <li class="list-group-item text-center">No items in playlist</li>
+                        </ul>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Status Bar -->
+    <div id="status-bar" class="text-center">
+        Ready
+    </div>
+    
+    <!-- Scripts -->
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+    <script src="https://cdn.socket.io/4.6.0/socket.io.min.js"></script>
+    <script>
+        document.addEventListener('DOMContentLoaded', function() {
+            // Get DOM elements
+            const statusBar = document.getElementById('status-bar');
+            const nowPlaying = document.getElementById('now-playing');
+            const deviceSelect = document.getElementById('device-select');
+            const discoverBtn = document.getElementById('discover-btn');
+            const connectBtn = document.getElementById('connect-btn');
+            const disconnectBtn = document.getElementById('disconnect-btn');
+            const connectionStatus = document.getElementById('connection-status');
+            const playlistSelect = document.getElementById('playlist-select');
+            const playlistItems = document.getElementById('playlist-items');
+            const playBtn = document.getElementById('play-btn');
+            const pauseBtn = document.getElementById('pause-btn');
+            const stopBtn = document.getElementById('stop-btn');
+            const prevBtn = document.getElementById('prev-btn');
+            const nextBtn = document.getElementById('next-btn');
+            const mediaUrl = document.getElementById('media-url');
+            const mediaTitle = document.getElementById('media-title');
+            const addMediaBtn = document.getElementById('add-media-btn');
+            const createPlaylistBtn = document.getElementById('create-playlist-btn');
+            const deletePlaylistBtn = document.getElementById('delete-playlist-btn');
+            const videoPlayer = document.getElementById('video-player');
+            
+            // Debug check for now-playing element
+            if (!nowPlaying) {
+                console.error('Error: now-playing element not found!');
+            }
+            
+            // State
+            let currentPlaylist = null;
+            let connected = false;
+            let playbackMode = 'chromecast';
+            
+            // --- Device/Group/Target Management Elements ---
+            const groupSelect = document.getElementById('group-select');
+            const newGroupName = document.getElementById('new-group-name');
+            const createGroupBtn = document.getElementById('create-group-btn');
+            const deleteGroupBtn = document.getElementById('delete-group-btn');
+            const addToGroupBtn = document.getElementById('add-to-group-btn');
+            const removeFromGroupBtn = document.getElementById('remove-from-group-btn');
+            const targetSelect = document.getElementById('target-select');
+            const perDeviceStatus = document.getElementById('per-device-status');
+
+            // --- Device/Group/Target State ---
+            let deviceList = [];
+            let groupList = [];
+            let groupMap = {};
+            let targetType = null; // 'device' or 'group'
+            let targetValue = null;
+
+            // --- Helper Functions for Device Groups ---
+            function loadGroups() {
+                fetch('/api/groups')
+                    .then(response => response.json())
+                    .then(data => {
+                        if (data.success) {
+                            groupList = Object.keys(data.groups);
+                            groupMap = data.groups;
+                            updateGroupSelect();
+                            updateTargetSelect();
+                        }
+                    });
+            }
+            function updateGroupSelect() {
+                groupSelect.innerHTML = '';
+                if (groupList.length === 0) {
+                    groupSelect.innerHTML = '<option value="">No groups</option>';
+                } else {
+                    groupList.forEach(group => {
+                        const opt = document.createElement('option');
+                        opt.value = group;
+                        opt.textContent = `${group} (${groupMap[group].length} devices)`;
+                        groupSelect.appendChild(opt);
+                    });
+                }
+            }
+            function updateTargetSelect() {
+                targetSelect.innerHTML = '<option value="">Select device or group</option>';
+                deviceList.forEach(device => {
+                    const opt = document.createElement('option');
+                    opt.value = device;
+                    opt.textContent = device;
+                    opt.dataset.type = 'device';
+                    targetSelect.appendChild(opt);
+                });
+                groupList.forEach(group => {
+                    const opt = document.createElement('option');
+                    opt.value = group;
+                    opt.textContent = `[Group] ${group}`;
+                    opt.dataset.type = 'group';
+                    targetSelect.appendChild(opt);
+                });
+            }
+            function updatePerDeviceStatus(status) {
+                if (!status.connected_devices) { perDeviceStatus.innerHTML = ''; return; }
+                let html = '<ul class="list-group">';
+                Object.entries(status.connected_devices).forEach(([device, devStatus]) => {
+                    html += `<li class="list-group-item d-flex justify-content-between align-items-center">
+                        <span>${device}</span>
+                        <span>${devStatus.playing ? 'Playing' : 'Paused'}${devStatus.current_playlist ? ` (${devStatus.current_playlist})` : ''}</span>
+                    </li>`;
+                });
+                html += '</ul>';
+                perDeviceStatus.innerHTML = html;
+            }
+            // --- Group CRUD Handlers ---
+            createGroupBtn.addEventListener('click', () => {
+                const name = newGroupName.value.trim();
+                if (!name) return updateStatus('Group name required');
+                fetch('/api/groups', {
+                    method: 'POST', headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({ name, devices: [] })
+                })
+                .then(r => r.json()).then(data => {
+                    if (data.success) { updateStatus('Group created'); loadGroups(); newGroupName.value = ''; }
+                    else updateStatus(data.error || 'Failed to create group');
+                });
+            });
+            groupSelect.addEventListener('change', () => {
+                const group = groupSelect.value;
+                deleteGroupBtn.disabled = !group;
+                addToGroupBtn.disabled = !group;
+                removeFromGroupBtn.disabled = !group;
+            });
+            deleteGroupBtn.addEventListener('click', () => {
+                const group = groupSelect.value;
+                if (!group) return;
+                fetch(`/api/groups/${group}`, { method: 'DELETE' })
+                .then(r => r.json()).then(data => {
+                    if (data.success) { updateStatus('Group deleted'); loadGroups(); }
+                    else updateStatus(data.error || 'Failed to delete group');
+                });
+            });
+            addToGroupBtn.addEventListener('click', () => {
+                const group = groupSelect.value;
+                const selected = Array.from(deviceSelect.selectedOptions).map(opt => opt.value).filter(Boolean);
+                if (!group || selected.length === 0) return;
+                // Show status before starting
+                updateStatus(`Adding ${selected.length} device(s) to group ${group}...`);
+                
+                // Track successful operations
+                let successCount = 0;
+                let errorCount = 0;
+                
+                selected.forEach(device => {
+                    console.log(`Adding device ${device} to group ${group}`);
+                    fetch(`/api/groups/${group}/add`, {
+                        method: 'POST', 
+                        headers: {'Content-Type': 'application/json'},
+                        body: JSON.stringify({ device })
+                    })
+                    .then(response => {
+                        if (!response.ok) {
+                            throw new Error(`HTTP error! Status: ${response.status}`);
+                        }
+                        return response.text();
+                    })
+                    .then(text => {
+                        // Try to parse as JSON, but handle empty responses
+                        let data;
+                        try {
+                            data = text ? JSON.parse(text) : {};
+                        } catch (e) {
+                            console.error('JSON parse error:', e, 'Raw response:', text);
+                            throw new Error('Invalid JSON response from server');
+                        }
+                        
+                        if (data.success) { 
+                            successCount++;
+                            console.log(`Successfully added ${device} to group ${group}`);
+                        } else {
+                            errorCount++;
+                            console.error(`Failed to add ${device} to group:`, data.error || 'Unknown error');
+                        }
+                        
+                        // Update status after all operations complete
+                        if (successCount + errorCount === selected.length) {
+                            if (errorCount === 0) {
+                                updateStatus(`Successfully added ${successCount} device(s) to group ${group}`);
+                            } else {
+                                updateStatus(`Added ${successCount} device(s) to group ${group} with ${errorCount} error(s)`);
+                            }
+                            loadGroups();
+                        }
+                    })
+                    .catch(error => {
+                        console.error(`Error adding ${device} to group:`, error);
+                        errorCount++;
+                        
+                        // Update status after all operations complete
+                        if (successCount + errorCount === selected.length) {
+                            updateStatus(`Added ${successCount} device(s) to group ${group} with ${errorCount} error(s)`);
+                            loadGroups();
+                        }
+                    });
+                });
+            });
+            removeFromGroupBtn.addEventListener('click', () => {
+                const group = groupSelect.value;
+                const selected = Array.from(deviceSelect.selectedOptions).map(opt => opt.value).filter(Boolean);
+                if (!group || selected.length === 0) return;
+                
+                // Show status before starting
+                updateStatus(`Removing ${selected.length} device(s) from group ${group}...`);
+                
+                // Track successful operations
+                let successCount = 0;
+                let errorCount = 0;
+                
+                selected.forEach(device => {
+                    console.log(`Removing device ${device} from group ${group}`);
+                    fetch(`/api/groups/${group}/remove`, {
+                        method: 'POST', 
+                        headers: {'Content-Type': 'application/json'},
+                        body: JSON.stringify({ device })
+                    })
+                    .then(response => {
+                        if (!response.ok) {
+                            throw new Error(`HTTP error! Status: ${response.status}`);
+                        }
+                        return response.text();
+                    })
+                    .then(text => {
+                        // Try to parse as JSON, but handle empty responses
+                        let data;
+                        try {
+                            data = text ? JSON.parse(text) : {};
+                        } catch (e) {
+                            console.error('JSON parse error:', e, 'Raw response:', text);
+                            throw new Error('Invalid JSON response from server');
+                        }
+                        
+                        if (data.success) { 
+                            successCount++;
+                            console.log(`Successfully removed ${device} from group ${group}`);
+                        } else {
+                            errorCount++;
+                            console.error(`Failed to remove ${device} from group:`, data.error || 'Unknown error');
+                        }
+                        
+                        // Update status after all operations complete
+                        if (successCount + errorCount === selected.length) {
+                            if (errorCount === 0) {
+                                updateStatus(`Successfully removed ${successCount} device(s) from group ${group}`);
+                            } else {
+                                updateStatus(`Removed ${successCount} device(s) from group ${group} with ${errorCount} error(s)`);
+                            }
+                            loadGroups();
+                        }
+                    })
+                    .catch(error => {
+                        console.error(`Error removing ${device} from group:`, error);
+                        errorCount++;
+                        
+                        // Update status after all operations complete
+                        if (successCount + errorCount === selected.length) {
+                            updateStatus(`Removed ${successCount} device(s) from group ${group} with ${errorCount} error(s)`);
+                            loadGroups();
+                        }
+                    });
+                });
+            });
+            targetSelect.addEventListener('change', () => {
+                const sel = targetSelect.selectedOptions[0];
+                if (!sel) { targetType = null; targetValue = null; return; }
+                targetType = sel.dataset.type || 'device';
+                targetValue = sel.value;
+            });
+            // --- Patch Device Discovery to update deviceList and Target Select ---
+            function discoverDevicesAndSyncTargets() {
+                fetch('/api/devices')
+                    .then(response => response.json())
+                    .then(data => {
+                        if (data.success && data.devices.length > 0) {
+                            deviceList = data.devices;
+                            updateTargetSelect();
+                        }
+                    });
+            }
+            // Socket.IO
+            const socket = io();
+            
+            socket.on('connect', () => {
+                updateStatus('Connected to server');
+            });
+            
+            socket.on('disconnect', () => {
+                updateStatus('Disconnected from server');
+            });
+            
+            socket.on('status_update', function(status) {
+                console.log('Received status update:', status);
+                // Ensure the status object has all required properties
+                if (!status.current_item && status.playing) {
+                    console.warn('Status update missing current_item but playing is true');
+                }
+                updatePlaybackStatus(status);
+            });
+            
+            socket.on('web_player_play', function(data) {
+                console.log('Web player play:', data);
+                playVideoInWebPlayer(data.url, data.title);
+                
+                // Ensure now-playing is updated when web player starts
+                if (nowPlaying) {
+                    nowPlaying.textContent = `Now Playing: ${data.title}`;
+                    nowPlaying.classList.remove('alert-info');
+                    nowPlaying.classList.add('alert-success');
+                }
+            });
+            
+            socket.on('web_player_pause', () => {
+                const videoPlayer = document.getElementById('video-player');
+                if (videoPlayer) {
+                    videoPlayer.pause();
+                }
+            });
+            
+            socket.on('web_player_resume', () => {
+                const videoPlayer = document.getElementById('video-player');
+                if (videoPlayer) {
+                    videoPlayer.play();
+                }
+            });
+            
+            socket.on('web_player_stop', () => {
+                const videoPlayer = document.getElementById('video-player');
+                if (videoPlayer) {
+                    videoPlayer.pause();
+                    videoPlayer.currentTime = 0;
+                }
+            });
+            
+            // Handle real-time playlist updates
+            socket.on('playlists_updated', () => {
+                console.log('Playlists updated, refreshing list');
+                loadPlaylists();
+            });
+            
+            socket.on('playlists_initial', (data) => {
+                console.log('Received initial playlists', data);
+                if (data.playlists && data.playlists.length > 0) {
+                    updatePlaylistsList(data.playlists);
+                }
+            });
+            
+            socket.on('playlist_content_updated', (data) => {
+                console.log('Playlist content updated', data);
+                if (data.playlist && currentPlaylist === data.playlist) {
+                    loadPlaylistItems(data.playlist);
+                }
+            });
+            
+            socket.on('playlist_content_initial', (data) => {
+                console.log('Received initial playlist content', data);
+                if (data.playlist && data.items) {
+                    currentPlaylist = data.playlist;
+                    updatePlaylistItems(data.playlist, data.items);
+                }
+            });
+            
+            socket.on('playlist_content_response', (data) => {
+                console.log('Received playlist content response', data);
+                if (data.playlist && data.items) {
+                    updatePlaylistItems(data.playlist, data.items);
+                }
+            });
+            
+            // Helper functions
+            function updateStatus(message) {
+                statusBar.textContent = message;
+                setTimeout(() => {
+                    statusBar.textContent = 'Ready';
+                }, 3000);
+            }
+            
+            function updatePlaybackStatus(status) {
+                // Update per-device status for multi-device/group
+                updatePerDeviceStatus(status);
+                // Update playback mode radio buttons
+                if (status.playback_mode) {
+                    playbackMode = status.playback_mode;
+                    if (playbackMode === 'chromecast') {
+                        document.getElementById('chromecastMode').checked = true;
+                        document.getElementById('device-select').disabled = false;
+                        document.getElementById('discover-btn').disabled = false;
+                    } else {
+                        document.getElementById('webMode').checked = true;
+                        document.getElementById('device-select').disabled = true;
+                        document.getElementById('discover-btn').disabled = true;
+                    }
+                }
+                
+                // Show/hide video player based on mode
+                const videoPlayerContainer = document.getElementById('video-player-container');
+                if (playbackMode === 'web') {
+                    videoPlayerContainer.style.display = 'block';
+                    
+                    // Enable controls regardless of connection status
+                    playBtn.disabled = false;
+                    pauseBtn.disabled = false;
+                    stopBtn.disabled = false;
+                    prevBtn.disabled = false;
+                    nextBtn.disabled = false;
+                    
+                    // Enable playlist controls
+                    mediaUrl.disabled = false;
+                    mediaTitle.disabled = false;
+                    addMediaBtn.disabled = false;
+                    
+                    // Disable Chromecast connection controls
+                    connectBtn.disabled = true;
+                } else {
+                    videoPlayerContainer.style.display = 'none';
+                    
+                    // Enable Chromecast connection controls
+                    if (deviceSelect.options.length > 1) {
+                        connectBtn.disabled = false;
+                    }
+                }
+                
+                if (status.connected_device) {
+                    connectionStatus.textContent = `Connected to: ${status.connected_device}`;
+                    connectionStatus.classList.remove('alert-secondary', 'alert-danger');
+                    connectionStatus.classList.add('alert-success');
+                    connected = true;
+                    
+                    // Enable controls for Chromecast mode
+                    if (playbackMode === 'chromecast') {
+                        disconnectBtn.disabled = false;
+                        playBtn.disabled = false;
+                        pauseBtn.disabled = false;
+                        stopBtn.disabled = false;
+                        prevBtn.disabled = false;
+                        nextBtn.disabled = false;
+                    }
+                } else {
+                    connectionStatus.textContent = 'Not connected';
+                    connectionStatus.classList.remove('alert-success', 'alert-danger');
+                    connectionStatus.classList.add('alert-secondary');
+                    connected = false;
+                    
+                    // Disable controls for Chromecast mode
+                    if (playbackMode === 'chromecast') {
+                        disconnectBtn.disabled = true;
+                        playBtn.disabled = true;
+                        pauseBtn.disabled = true;
+                        stopBtn.disabled = true;
+                        prevBtn.disabled = true;
+                        nextBtn.disabled = true;
+                    }
+                }
+                
+                // Update now playing status with detailed logging
+                console.log('Updating now-playing with status:', JSON.stringify(status));
+                
+                if (status.playing && status.current_item) {
+                    // Log the current item details
+                    console.log('Current item:', status.current_item);
+                    console.log('Current index:', status.current_index);
+                    
+                    // Get the playlist length if available
+                    let playlistLength = 0;
+                    if (status.current_playlist && playlist_manager && playlist_manager.playlists && 
+                        playlist_manager.playlists[status.current_playlist]) {
+                        playlistLength = playlist_manager.playlists[status.current_playlist].length;
+                    } else if (status.current_playlist_items) {
+                        playlistLength = status.current_playlist_items.length;
+                    }
+                    
+                    // Update the now playing element
+                    nowPlaying.textContent = `Now Playing: ${status.current_item.title} (${status.current_index + 1}/${playlistLength || 0})`;
+                    nowPlaying.classList.remove('alert-info');
+                    nowPlaying.classList.add('alert-success');
+                    console.log('Updated now-playing to:', nowPlaying.textContent);
+                } else {
+                    nowPlaying.textContent = 'Nothing playing';
+                    nowPlaying.classList.remove('alert-success');
+                    nowPlaying.classList.add('alert-info');
+                    console.log('Updated now-playing to: Nothing playing');
+                }
+                
+                // Update playlist items if needed
+                if (status.current_playlist && currentPlaylist === status.current_playlist) {
+                    const items = document.querySelectorAll('.playlist-item');
+                    items.forEach((item, index) => {
+                        if (index === status.current_index) {
+                            item.classList.add('now-playing');
+                        } else {
+                            item.classList.remove('now-playing');
+                        }
+                    });
+                }
+                
+                // If current_playlist is set but we don't have it loaded, request it
+                if (status.current_playlist && currentPlaylist !== status.current_playlist) {
+                    requestPlaylistContent(status.current_playlist);
+                }
+            }
+            
+            function playVideoInWebPlayer(url, title) {
+                const videoPlayer = document.getElementById('video-player');
+                const videoPlayerContainer = document.getElementById('video-player-container');
+                
+                // Show the video player
+                videoPlayerContainer.style.display = 'block';
+                
+                // Check if the URL is a direct media URL or needs proxying
+                let playbackUrl = url;
+                
+                // For remote URLs that might have CORS issues, use our proxy
+                if (url.startsWith('http') && !url.includes(window.location.hostname)) {
+                    playbackUrl = `/api/proxy/${encodeURIComponent(url)}`;
+                }
+                
+                // Check if the URL is an HLS stream (.m3u8)
+                const isHLS = playbackUrl.toLowerCase().includes('.m3u8');
+                
+                // Clear any existing sources
+                videoPlayer.src = '';
+                videoPlayer.title = title;
+                
+                // If HLS.js is supported and this is an HLS stream
+                if (isHLS && Hls.isSupported()) {
+                    console.log('Using HLS.js for playback of:', playbackUrl);
+                    
+                    // Destroy any existing HLS instance
+                    if (window.hls) {
+                        window.hls.destroy();
+                    }
+                    
+                    // Create a new HLS instance
+                    const hls = new Hls({
+                        debug: true,
+                        enableWorker: true,
+                        lowLatencyMode: true
+                    });
+                    window.hls = hls;
+                    
+                    // Bind HLS to the video element
+                    hls.loadSource(playbackUrl);
+                    hls.attachMedia(videoPlayer);
+                    
+                    // Play when manifest is loaded
+                    hls.on(Hls.Events.MANIFEST_PARSED, function() {
+                        console.log('HLS manifest parsed, attempting to play');
+                        videoPlayer.play().catch(err => {
+                            console.error('Error playing video:', err);
+                            updateStatus('Error playing video: ' + err.message);
+                        });
+                    });
+                    
+                    // Handle HLS errors
+                    hls.on(Hls.Events.ERROR, function(event, data) {
+                        console.error('HLS error:', data);
+                        if (data.fatal) {
+                            switch(data.type) {
+                                case Hls.ErrorTypes.NETWORK_ERROR:
+                                    console.error('Fatal network error, trying to recover');
+                                    hls.startLoad();
+                                    break;
+                                case Hls.ErrorTypes.MEDIA_ERROR:
+                                    console.error('Fatal media error, trying to recover');
+                                    hls.recoverMediaError();
+                                    break;
+                                default:
+                                    console.error('Fatal error, cannot recover');
+                                    hls.destroy();
+                                    updateStatus('Fatal playback error: ' + data.details);
+                                    break;
+                            }
+                        }
+                    });
+                } else {
+                    // For non-HLS content or if HLS.js is not supported
+                    console.log('Using native playback for:', playbackUrl);
+                    videoPlayer.src = playbackUrl;
+                    videoPlayer.load();
+                    videoPlayer.play().catch(err => {
+                        console.error('Error playing video:', err);
+                        updateStatus('Error playing video: ' + err.message);
+                    });
+                }
+            }
+            
+            function loadPlaylists() {
+                updateStatus('Loading playlists...');
+                fetch('/api/playlists')
+                    .then(response => response.json())
+                    .then(data => {
+                        if (data.success) {
+                            console.log('Loaded playlists:', data.playlists);
+                            updatePlaylistsList(data.playlists || {});
+                            updateStatus('Playlists loaded');
+                        } else {
+                            console.error('Error from server:', data.error);
+                            updateStatus('Error loading playlists: ' + data.error);
+                            // Initialize with empty playlists if there's an error
+                            updatePlaylistsList({});
+                        }
+                    })
+                    .catch(error => {
+                        console.error('Error loading playlists:', error);
+                        updateStatus('Error loading playlists: ' + error.message);
+                        // Initialize with empty playlists if there's an error
+                        updatePlaylistsList({});
+                    });
+            }
+            
+            function updatePlaylistsList(playlists) {
+                const playlistList = document.getElementById('playlist-list');
+                if (!playlistList) {
+                    console.error('Playlist list element not found');
+                    return;
+                }
+                
+                if (playlists && Object.keys(playlists).length > 0) {
+                    playlistList.innerHTML = '';
+                    Object.keys(playlists).forEach(playlist => {
+                        const li = document.createElement('li');
+                        li.className = 'list-group-item d-flex justify-content-between align-items-center playlist-item';
+                        li.textContent = playlist;
+                        
+                        const btnGroup = document.createElement('div');
+                        btnGroup.className = 'btn-group';
+                        
+                        const playBtn = document.createElement('button');
+                        playBtn.className = 'btn btn-sm btn-success';
+                        playBtn.innerHTML = '<i class="bi bi-play-fill"></i>';
+                        playBtn.setAttribute('aria-label', 'Play playlist');
+                        playBtn.setAttribute('title', 'Play playlist');
+                        playBtn.onclick = (e) => {
+                            e.stopPropagation();
+                            playPlaylist(playlist);
+                        };
+                        
+                        const deleteBtn = document.createElement('button');
+                        deleteBtn.className = 'btn btn-sm btn-danger';
+                        deleteBtn.innerHTML = '<i class="bi bi-trash"></i>';
+                        deleteBtn.setAttribute('aria-label', 'Delete playlist');
+                        deleteBtn.setAttribute('title', 'Delete playlist');
+                        deleteBtn.onclick = (e) => {
+                            e.stopPropagation();
+                            deletePlaylist(playlist);
+                        };
+                        
+                        btnGroup.appendChild(playBtn);
+                        btnGroup.appendChild(deleteBtn);
+                        li.appendChild(btnGroup);
+                        
+                        li.onclick = () => {
+                            loadPlaylistItems(playlist);
+                        };
+                        
+                        playlistList.appendChild(li);
+                    });
+                } else {
+                    playlistList.innerHTML = '<li class="list-group-item text-center">No playlists available</li>';
+                }
+            }
+            
+            function loadPlaylistItems(playlist) {
+                currentPlaylist = playlist;
+                playlistHeader.textContent = `Playlist: ${playlist}`;
+                playlistHeader.classList.remove('alert-secondary');
+                playlistHeader.classList.add('alert-primary');
+                
+                // Enable add media controls regardless of playback mode
+                mediaUrl.disabled = false;
+                mediaTitle.disabled = false;
+                addMediaBtn.disabled = false;
+                
+                fetch(`/api/playlist/${playlist}`)
+                    .then(response => response.json())
+                    .then(data => {
+                        if (data.success) {
+                            updatePlaylistItems(playlist, data.playlist);
+                        }
+                    })
+                    .catch(error => {
+                        console.error('Error loading playlist items:', error);
+                        updateStatus('Error loading playlist items');
+                    });
+            }
+            
+            function updatePlaylistItems(playlist, items) {
+                if (items && items.length > 0) {
+                    playlistItems.innerHTML = '';
+                    items.forEach((item, index) => {
+                        const li = document.createElement('li');
+                        li.className = 'list-group-item d-flex justify-content-between align-items-center playlist-item';
+                        li.textContent = item.title;
+                        
+                        const btnGroup = document.createElement('div');
+                        btnGroup.className = 'btn-group';
+                        
+                        if (playbackMode === 'web') {
+                            const playBtn = document.createElement('button');
+                            playBtn.className = 'btn btn-sm btn-primary';
+                            playBtn.innerHTML = '<i class="bi bi-play-fill"></i>';
+                            playBtn.setAttribute('aria-label', 'Play directly');
+                            playBtn.setAttribute('title', 'Play directly');
+                            playBtn.onclick = (e) => {
+                                e.stopPropagation();
+                                playVideoInWebPlayer(item.url, item.title);
+                            };
+                            btnGroup.appendChild(playBtn);
+                        }
+                        
+                        const deleteBtn = document.createElement('button');
+                        deleteBtn.className = 'btn btn-sm btn-danger';
+                        deleteBtn.innerHTML = '<i class="bi bi-trash"></i>';
+                        deleteBtn.setAttribute('aria-label', 'Remove from playlist');
+                        deleteBtn.setAttribute('title', 'Remove from playlist');
+                        deleteBtn.onclick = (e) => {
+                            e.stopPropagation();
+                            removeFromPlaylist(playlist, index);
+                        };
+                        
+                        btnGroup.appendChild(deleteBtn);
+                        li.appendChild(btnGroup);
+                        playlistItems.appendChild(li);
+                    });
+                } else {
+                    playlistItems.innerHTML = '<li class="list-group-item text-center">No items in playlist</li>';
+                }
+            }
+            
+            function requestPlaylistContent(playlist) {
+                socket.emit('request_playlist_content', { playlist });
+            }
+            
+            function createPlaylist() {
+                const name = newPlaylistName.value.trim();
+                if (!name) {
+                    updateStatus('Playlist name cannot be empty');
+                    return;
+                }
+                
+                console.log('Creating playlist:', name);
+                updateStatus('Creating playlist...');
+                
+                fetch('/api/playlists', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({ name })
+                })
+                    .then(response => {
+                        if (!response.ok) {
+                            throw new Error(`HTTP error! Status: ${response.status}`);
+                        }
+                        return response.text().then(text => {
+                            return text ? JSON.parse(text) : {};
+                        });
+                    })
+                    .then(data => {
+                        console.log('Playlist creation response:', data);
+                        if (data.success) {
+                            updateStatus(`Playlist "${name}" created successfully`);
+                            newPlaylistName.value = '';
+                            setTimeout(loadPlaylists, 500);
+                        } else {
+                            updateStatus(`Error: ${data.error || 'Failed to create playlist'}`);
+                        }
+                    })
+                    .catch(error => {
+                        console.error('Error creating playlist:', error);
+                        updateStatus('Error creating playlist: ' + error.message);
+                    });
+            }
+            
+            function deletePlaylist(playlist) {
+                if (!confirm(`Are you sure you want to delete playlist "${playlist}"?`)) {
+                    return;
+                }
+                
+                fetch(`/api/playlist/${playlist}`, {
+                    method: 'DELETE'
+                })
+                    .then(response => response.json())
+                    .then(data => {
+                        if (data.success) {
+                            updateStatus(`Playlist "${playlist}" deleted`);
+                            loadPlaylists();
+                            
+                            if (currentPlaylist === playlist) {
+                                currentPlaylist = null;
+                                playlistHeader.textContent = 'No playlist selected';
+                                playlistHeader.classList.remove('alert-primary');
+                                playlistHeader.classList.add('alert-secondary');
+                                playlistItems.innerHTML = '<li class="list-group-item text-center">No items in playlist</li>';
+                                
+                                // Disable add media controls
+                                mediaUrl.disabled = true;
+                                mediaTitle.disabled = true;
+                                addMediaBtn.disabled = true;
+                            }
+                        } else {
+                            updateStatus(`Error: ${data.error || 'Failed to delete playlist'}`);
+                        }
+                    })
+                    .catch(error => {
+                        console.error('Error deleting playlist:', error);
+                        updateStatus('Error deleting playlist');
+                    });
+            }
+            
+            function addToPlaylist() {
+                if (!currentPlaylist) {
+                    updateStatus('No playlist selected');
+                    return;
+                }
+                
+                const url = mediaUrl.value.trim();
+                const title = mediaTitle.value.trim();
+                
+                if (!url) {
+                    updateStatus('Media URL cannot be empty');
+                    return;
+                }
+                
+                fetch(`/api/playlist/${currentPlaylist}/add`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({ url, title: title || null })
+                })
+                    .then(response => response.json())
+                    .then(data => {
+                        if (data.success) {
+                            updateStatus(`Media added to playlist "${currentPlaylist}"`);
+                            mediaUrl.value = '';
+                            mediaTitle.value = '';
+                            loadPlaylistItems(currentPlaylist);
+                        } else {
+                            updateStatus(`Error: ${data.error || 'Failed to add media'}`);
+                        }
+                    })
+                    .catch(error => {
+                        console.error('Error adding media:', error);
+                        updateStatus('Error adding media');
+                    });
+            }
+            
+            function removeFromPlaylist(playlist, index) {
+                fetch(`/api/playlist/${playlist}/remove/${index}`, {
+                    method: 'DELETE'
+                })
+                    .then(response => response.json())
+                    .then(data => {
+                        if (data.success) {
+                            updateStatus(`Item removed from playlist "${playlist}"`);
+                            loadPlaylistItems(playlist);
+                        } else {
+                            updateStatus(`Error: ${data.error || 'Failed to remove item'}`);
+                        }
+                    })
+                    .catch(error => {
+                        console.error('Error removing item:', error);
+                        updateStatus('Error removing item');
+                    });
+            }
+            
+            function playPlaylist(playlist) {
+                // For web player mode, we don't need to be connected to a device
+                if (playbackMode === 'chromecast' && !connected) {
+                    updateStatus('Not connected to a Chromecast device');
+                    return;
+                }
+                
+                fetch(`/api/play/${playlist}`, {
+                    method: 'POST'
+                })
+                    .then(response => response.json())
+                    .then(data => {
+                        if (data.success) {
+                            updateStatus(`Playing playlist "${playlist}"`);
+                            // Load the playlist items if not already loaded
+                            if (currentPlaylist !== playlist) {
+                                loadPlaylistItems(playlist);
+                            }
+                        } else {
+                            updateStatus(`Error: ${data.error || 'Failed to play playlist'}`);
+                        }
+                    })
+                    .catch(error => {
+                        console.error('Error playing playlist:', error);
+                        updateStatus('Error playing playlist');
+                    });
+            }
+            
+            function discoverDevices() {
+                // Enable the discover button on mobile devices
+                const discoverBtn = document.getElementById('discover-btn');
+                discoverBtn.disabled = false;
+                
+                updateStatus('Discovering devices...');
+                fetch('/api/devices')
+                    .then(response => response.json())
+                    .then(data => {
+                        if (data.success) {
+                            const devices = data.devices;
+                            const deviceSelect = document.getElementById('device-select');
+                            deviceSelect.innerHTML = '';
+                            
+                            // Always register this device if it's not already registered
+                            if (clientId && clientName && !devices.includes(clientName)) {
+                                // This device is registered but not in the device list, refresh registration
+                                fetch('/api/web-clients/update', {
+                                    method: 'POST',
+                                    headers: {'Content-Type': 'application/json'},
+                                    body: JSON.stringify({
+                                        client_id: clientId,
+                                        status: { connected: true }
+                                    })
+                                }).then(() => {
+                                    // Refresh device list after updating registration
+                                    setTimeout(discoverDevices, 500);
+                                }).catch(err => console.error('Error updating client:', err));
+                                
+                                return; // Will refresh after registration update
+                            }
+                            
+                            if (devices.length === 0) {
+                                if (!clientId) {
+                                    // No devices and not registered, prompt to register
+                                    deviceSelect.innerHTML = '<option value="">No devices found - Register this device first</option>';
+                                    updateStatus('No devices found. Register this device to create groups.');
+                                } else {
+                                    deviceSelect.innerHTML = '<option value="">No devices found</option>';
+                                    updateStatus('No Chromecast devices found. You can still use this device.');
+                                }
+                                return;
+                            }
+                            
+                            devices.forEach(device => {
+                                const option = document.createElement('option');
+                                option.value = device;
+                                option.textContent = device;
+                                
+                                // Mark web clients with an icon
+                                if (device === clientName) {
+                                    option.textContent = `${device} (This Device) 💻`;
+                                    option.classList.add('web-client');
+                                    option.selected = true; // Auto-select this device
+                                } else if (device.includes('Web Client') || 
+                                           device.includes('Mobile') || 
+                                           device.includes('Desktop') || 
+                                           device.includes('Tablet')) {
+                                    option.textContent = `${device} 💻`;
+                                    option.classList.add('web-client');
+                                }
+                                
+                                deviceSelect.appendChild(option);
+                            });
+                            
+                            const chromecastCount = devices.filter(d => 
+                                !d.includes('Web Client') && 
+                                !d.includes('Mobile') && 
+                                !d.includes('Desktop') && 
+                                !d.includes('Tablet')
+                            ).length;
+                            
+                            const webClientCount = devices.length - chromecastCount;
+                            
+                            updateStatus(`Found ${devices.length} device(s): ${chromecastCount} Chromecast(s), ${webClientCount} web client(s)`);
+                            connectBtn.disabled = false;
+                        } else {
+                            updateStatus(`Error: ${data.error || 'Failed to discover devices'}`);
+                        }
+                    })
+                    .catch(error => {
+                        console.error('Error:', error);
+                        updateStatus(`Error: ${error.message}`);
+                    });
+            }
+            
+            function connectToDevice() {
+                const device = deviceSelect.value;
+                if (!device) {
+                    updateStatus('Please select a device');
+                    return;
+                }
+                
+                updateStatus(`Connecting to ${device}...`);
+                
+                fetch('/api/connect', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({ device })
+                })
+                    .then(response => response.json())
+                    .then(data => {
+                        if (data.success) {
+                            updateStatus(`Connected to ${device}`);
+                        } else {
+                            updateStatus(`Error: ${data.error || 'Failed to connect'}`);
+                        }
+                    })
+                    .catch(error => {
+                        console.error('Error connecting to device:', error);
+                        updateStatus('Error connecting to device');
+                    });
+            }
+            
+            function disconnectFromDevice() {
+                fetch('/api/disconnect', {
+                    method: 'POST'
+                })
+                    .then(response => response.json())
+                    .then(data => {
+                        if (data.success) {
+                            updateStatus('Disconnected from device');
+                        } else {
+                            updateStatus(`Error: ${data.error || 'Failed to disconnect'}`);
+                        }
+                    })
+                    .catch(error => {
+                        console.error('Error disconnecting from device:', error);
+                        updateStatus('Error disconnecting from device');
+                    });
+            }
+            
+            // Event listeners
+            discoverBtn.addEventListener('click', function(e) {
+                e.preventDefault(); // Prevent default button behavior
+                discoverBtn.disabled = false; // Ensure button is enabled
+                discoverDevices(); // Call the discover function
+            });
+            
+            // Add touch event for mobile devices
+            discoverBtn.addEventListener('touchstart', function(e) {
+                e.preventDefault(); // Prevent default touch behavior
+                discoverBtn.disabled = false; // Ensure button is enabled
+                discoverDevices(); // Call the discover function
+            });
+            
+            connectBtn.addEventListener('click', connectToDevice);
+            disconnectBtn.addEventListener('click', disconnectFromDevice);
+            
+            // Playback mode toggle
+            document.getElementById('chromecastMode').addEventListener('change', function() {
+                if (this.checked) {
+                    setPlaybackMode('chromecast');
+                }
+            });
+            
+            document.getElementById('webMode').addEventListener('change', function() {
+                if (this.checked) {
+                    setPlaybackMode('web');
+                }
+            });
+            
+            // File upload
+            document.getElementById('upload-form').addEventListener('submit', function(e) {
+                e.preventDefault();
+                uploadFile();
+            });
+            
+            prevBtn.addEventListener('click', () => {
+                const body = targetValue ? { target: targetValue } : {};
+                fetch('/api/previous', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(body)
+                })
+                    .then(response => response.json())
+                    .then(data => {
+                        if (!data.success) {
+                            updateStatus(`Error: ${data.error || 'Failed to play previous track'}`);
+                        }
+                    })
+                    .catch(error => {
+                        console.error('Error playing previous track:', error);
+                        updateStatus('Error playing previous track');
+                    });
+            });
+            
+            playBtn.addEventListener('click', () => {
+                const body = targetValue ? { target: targetValue } : {};
+                fetch('/api/resume', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(body)
+                })
+                    .then(response => response.json())
+                    .then(data => {
+                        if (!data.success) {
+                            updateStatus(`Error: ${data.error || 'Failed to resume playback'}`);
+                        }
+                    })
+                    .catch(error => {
+                        console.error('Error resuming playback:', error);
+                        updateStatus('Error resuming playback');
+                    });
+            });
+            
+            pauseBtn.addEventListener('click', () => {
+                const body = targetValue ? { target: targetValue } : {};
+                fetch('/api/pause', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(body)
+                })
+                    .then(response => response.json())
+                    .then(data => {
+                        if (!data.success) {
+                            updateStatus(`Error: ${data.error || 'Failed to pause playback'}`);
+                        }
+                    })
+                    .catch(error => {
+                        console.error('Error pausing playback:', error);
+                        updateStatus('Error pausing playback');
+                    });
+            });
+            
+            stopBtn.addEventListener('click', () => {
+                const body = targetValue ? { target: targetValue } : {};
+                fetch('/api/stop', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(body)
+                })
+                    .then(response => response.json())
+                    .then(data => {
+                        if (!data.success) {
+                            updateStatus(`Error: ${data.error || 'Failed to stop playback'}`);
+                        }
+                    })
+                    .catch(error => {
+                        console.error('Error stopping playback:', error);
+                        updateStatus('Error stopping playback');
+                    });
+            });
+            
+            nextBtn.addEventListener('click', () => {
+                const body = targetValue ? { target: targetValue } : {};
+                fetch('/api/next', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(body)
+                })
+                    .then(response => response.json())
+                    .then(data => {
+                        if (!data.success) {
+                            updateStatus(`Error: ${data.error || 'Failed to play next track'}`);
+                        }
+                    })
+                    .catch(error => {
+                        console.error('Error playing next track:', error);
+                        updateStatus('Error playing next track');
+                    });
+            });
+            
+            createPlaylistBtn.addEventListener('click', createPlaylist);
+            
+            addMediaBtn.addEventListener('click', addToPlaylist);
+            
+            // Function to set playback mode
+            function setPlaybackMode(mode) {
+                fetch('/api/playback_mode', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({ mode })
+                })
+                    .then(response => response.json())
+                    .then(data => {
+                        if (data.success) {
+                            playbackMode = mode;
+                            updateStatus(`Playback mode set to ${mode}`);
+                        } else {
+                            updateStatus(`Error: ${data.error || 'Failed to set playback mode'}`);
+                        }
+                    })
+                    .catch(error => {
+                        console.error('Error setting playback mode:', error);
+                        updateStatus('Error setting playback mode');
+                    });
+            }
+            
+            // Function to upload a file
+            function uploadFile() {
+                const fileInput = document.getElementById('file-input');
+                const file = fileInput.files[0];
+                if (!file) {
+                    updateStatus('Please select a file to upload');
+                    return;
+                }
+                
+                const uploadType = document.querySelector('input[name="uploadType"]:checked').value;
+                const progressBar = document.querySelector('.progress-bar');
+                const progress = document.querySelector('.progress');
+                const uploadStatus = document.getElementById('upload-status');
+                
+                // Handle URL list upload
+                if (uploadType === 'urlList' && file.type === 'text/plain') {
+                    const playlistSelect = document.getElementById('playlist-select-for-urls');
+                    const selectedPlaylist = playlistSelect.value;
+                    
+                    if (!selectedPlaylist) {
+                        updateStatus('Please select a playlist to add URLs to');
+                        return;
+                    }
+                    
+                    progress.style.display = 'block';
+                    uploadStatus.textContent = 'Processing URL list...';
+                    
+                    const reader = new FileReader();
+                    reader.onload = function(e) {
+                        const content = e.target.result;
+                        const urls = content.split('\n')
+                            .map(line => line.trim())
+                            .filter(line => line && !line.startsWith('#')); // Skip empty lines and comments
+                        
+                        if (urls.length === 0) {
+                            progress.style.display = 'none';
+                            uploadStatus.textContent = 'No valid URLs found in the file';
+                            uploadStatus.className = 'alert alert-warning mt-2';
+                            return;
+                        }
+                        
+                        uploadStatus.textContent = `Processing ${urls.length} URLs...`;
+                        
+                        // Process URLs sequentially
+                        let processed = 0;
+                        let successful = 0;
+                        
+                        function processNextUrl(index) {
+                            if (index >= urls.length) {
+                                // All URLs processed
+                                progress.style.display = 'none';
+                                uploadStatus.textContent = `Added ${successful} out of ${urls.length} URLs to playlist "${selectedPlaylist}"`;
+                                uploadStatus.className = 'alert alert-success mt-2';
+                                fileInput.value = '';
+                                return;
+                            }
+                            
+                            const url = urls[index];
+                            const title = `Media from URL list (${index + 1})`;
+                            
+                            // Update progress
+                            const percent = Math.round((index / urls.length) * 100);
+                            progressBar.style.width = `${percent}%`;
+                            progressBar.setAttribute('aria-valuenow', percent);
+                            
+                            // Add URL to playlist
+                            fetch(`/api/playlist/${encodeURIComponent(selectedPlaylist)}/add`, {
+                                method: 'POST',
+                                headers: {
+                                    'Content-Type': 'application/json'
+                                },
+                                body: JSON.stringify({
+                                    url: url,
+                                    title: title
+                                })
+                            })
+                            .then(response => response.json())
+                            .then(data => {
+                                processed++;
+                                if (data.success) {
+                                    successful++;
+                                }
+                                
+                                // Update status
+                                uploadStatus.textContent = `Processing URLs: ${processed}/${urls.length}`;
+                                
+                                // Process next URL
+                                processNextUrl(index + 1);
+                            })
+                            .catch(error => {
+                                console.error(`Error adding URL ${url}:`, error);
+                                processed++;
+                                processNextUrl(index + 1);
+                            });
+                        }
+                        
+                        // Start processing URLs
+                        processNextUrl(0);
+                    };
+                    
+                    reader.onerror = function() {
+                        progress.style.display = 'none';
+                        uploadStatus.textContent = 'Error reading file';
+                        uploadStatus.className = 'alert alert-danger mt-2';
+                    };
+                    
+                    reader.readAsText(file);
+                } else {
+                    // Regular media file upload
+                    const formData = new FormData();
+                    formData.append('file', file);
+                    
+                    progress.style.display = 'block';
+                    uploadStatus.textContent = 'Uploading...';
+                    
+                    fetch('/api/upload', {
+                        method: 'POST',
+                        body: formData
+                    })
+                        .then(response => response.json())
+                        .then(data => {
+                            progress.style.display = 'none';
+                            if (data.success) {
+                                uploadStatus.textContent = `File uploaded successfully: ${data.filename}`;
+                                uploadStatus.className = 'alert alert-success mt-2';
+                                fileInput.value = '';
+                                
+                                // Prompt to add to a playlist
+                                const playlistName = prompt('Add to playlist? Enter playlist name:');
+                                if (playlistName) {
+                                    addToPlaylistFromUpload(playlistName, data.url, data.filename);
+                                }
+                            } else {
+                                uploadStatus.textContent = `Error: ${data.error || 'Failed to upload file'}`;
+                                uploadStatus.className = 'alert alert-danger mt-2';
+                            }
+                        })
+                        .catch(error => {
+                            progress.style.display = 'none';
+                            console.error('Error uploading file:', error);
+                            uploadStatus.textContent = 'Error uploading file';
+                            uploadStatus.className = 'alert alert-danger mt-2';
+                        });
+                }
+            }
+            
+            // Event listeners for upload type radio buttons
+            document.getElementById('mediaUpload').addEventListener('change', function() {
+                document.getElementById('urlListOptions').style.display = 'none';
+            });
+            
+            document.getElementById('urlListUpload').addEventListener('change', function() {
+                document.getElementById('urlListOptions').style.display = 'block';
+                // Populate playlist dropdown if not already done
+                updatePlaylistDropdownForUrls();
+            });
+            
+            // Function to update playlist dropdown for URL list
+            function updatePlaylistDropdownForUrls() {
+                const playlistSelect = document.getElementById('playlist-select-for-urls');
+                // Clear existing options except the first one
+                while (playlistSelect.options.length > 1) {
+                    playlistSelect.remove(1);
+                }
+                
+                // Add playlists
+                fetch('/api/playlists')
+                    .then(response => response.json())
+                    .then(data => {
+                        if (data.success && data.playlists) {
+                            data.playlists.forEach(playlist => {
+                                const option = document.createElement('option');
+                                option.value = playlist;
+                                option.textContent = playlist;
+                                playlistSelect.appendChild(option);
+                            });
+                        }
+                    })
+                    .catch(error => {
+                        console.error('Error fetching playlists:', error);
+                        updateStatus('Error fetching playlists');
+                    });
+            }
+            
+            // Function to add uploaded file to a playlist
+            function addToPlaylistFromUpload(playlistName, url, title) {
+                fetch(`/api/playlist/${playlistName}/add`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({ url, title })
+                })
+                    .then(response => response.json())
+                    .then(data => {
+                        if (data.success) {
+                            updateStatus(`Added ${title} to playlist ${playlistName}`);
+                            loadPlaylists();
+                            if (currentPlaylist === playlistName) {
+                                loadPlaylistItems(playlistName);
+                            }
+                        } else {
+                            updateStatus(`Error: ${data.error || 'Failed to add to playlist'}`);
+                        }
+                    })
+                    .catch(error => {
+                        console.error('Error adding to playlist:', error);
+                        updateStatus('Error adding to playlist');
+                    });
+            }
+            
+            // Web Client Registration
+            let clientId = localStorage.getItem('castcomplete_client_id');
+            let clientName = localStorage.getItem('castcomplete_client_name');
+            
+            function registerWebClient() {
+                const deviceName = prompt('Enter a name for this device (optional):', '');
+                
+                // Prepare client info
+                const clientInfo = {
+                    name: deviceName,
+                    userAgent: navigator.userAgent,
+                    screen: {
+                        width: window.screen.width,
+                        height: window.screen.height
+                    }
+                };
+                
+                fetch('/api/web-clients/register', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({
+                        client_id: clientId, // Will be generated server-side if null
+                        client_info: clientInfo
+                    })
+                })
+                .then(r => r.json())
+                .then(data => {
+                    if (data.success) {
+                        clientId = data.client_id;
+                        clientName = data.name;
+                        
+                        // Save to localStorage
+                        localStorage.setItem('castcomplete_client_id', clientId);
+                        localStorage.setItem('castcomplete_client_name', clientName);
+                        
+                        // Update UI
+                        document.getElementById('client-status').classList.remove('d-none');
+                        document.getElementById('client-name').textContent = clientName;
+                        document.getElementById('unregister-client-btn').classList.remove('d-none');
+                        document.getElementById('register-client-btn').classList.add('d-none');
+                        
+                        updateStatus(`Registered as ${clientName}`);
+                        
+                        // Refresh device lists
+                        discoverDevicesAndSyncTargets();
+                    } else {
+                        updateStatus(`Registration failed: ${data.error || 'Unknown error'}`);
+                    }
+                })
+                .catch(err => {
+                    updateStatus(`Registration error: ${err.message}`);
+                    console.error('Registration error:', err);
+                });
+            }
+            
+            function unregisterWebClient() {
+                if (!clientId) {
+                    updateStatus('No client ID found, cannot unregister');
+                    return;
+                }
+                
+                updateStatus('Unregistering device...');
+                console.log('Unregistering client ID:', clientId);
+                
+                fetch('/api/web-clients/unregister', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({ client_id: clientId })
+                })
+                .then(r => r.json())
+                .then(data => {
+                    console.log('Unregister response:', data);
+                    
+                    // Always clean up the client registration regardless of server response
+                    // This ensures the client can re-register even if server cleanup fails
+                    
+                    // Clear localStorage
+                    localStorage.removeItem('castcomplete_client_id');
+                    localStorage.removeItem('castcomplete_client_name');
+                    
+                    // Update UI
+                    document.getElementById('client-status').classList.add('d-none');
+                    document.getElementById('client-name').textContent = 'Not registered';
+                    document.getElementById('unregister-client-btn').classList.add('d-none');
+                    document.getElementById('register-client-btn').classList.remove('d-none');
+                    
+                    clientId = null;
+                    clientName = null;
+                    
+                    if (data.success) {
+                        updateStatus('Unregistered successfully');
+                    } else {
+                        // Still consider it a success from the client perspective
+                        updateStatus('Client unregistered locally. Server message: ' + (data.error || 'Unknown error'));
+                    }
+                    
+                    // Refresh device lists
+                    setTimeout(discoverDevicesAndSyncTargets, 500);
+                })
+                .catch(err => {
+                    console.error('Unregistration error:', err);
+                    
+                    // Still clean up the client registration even if the server request fails
+                    localStorage.removeItem('castcomplete_client_id');
+                    localStorage.removeItem('castcomplete_client_name');
+                    
+                    // Update UI
+                    document.getElementById('client-status').classList.add('d-none');
+                    document.getElementById('client-name').textContent = 'Not registered';
+                    document.getElementById('unregister-client-btn').classList.add('d-none');
+                    document.getElementById('register-client-btn').classList.remove('d-none');
+                    
+                    clientId = null;
+                    clientName = null;
+                    
+                    updateStatus(`Client unregistered locally. Server error: ${err.message}`);
+                    setTimeout(discoverDevicesAndSyncTargets, 500);
+                });
+            }
+            
+            // Check if already registered
+            if (clientId && clientName) {
+                document.getElementById('client-status').classList.remove('d-none');
+                document.getElementById('client-name').textContent = clientName;
+                document.getElementById('unregister-client-btn').classList.remove('d-none');
+                document.getElementById('register-client-btn').classList.add('d-none');
+                
+                // Send a heartbeat to the server
+                fetch('/api/web-clients/update', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({
+                        client_id: clientId,
+                        status: { connected: true }
+                    })
+                }).catch(err => console.error('Heartbeat error:', err));
+            }
+            
+            // Add event listeners for web client buttons
+            document.getElementById('register-client-btn').addEventListener('click', registerWebClient);
+            document.getElementById('unregister-client-btn').addEventListener('click', unregisterWebClient);
+            
+            // Add event listeners for refresh buttons
+            document.getElementById('refresh-groups-btn').addEventListener('click', () => {
+                updateStatus('Refreshing device groups...');
+                loadGroups();
+            });
+            
+            document.getElementById('refresh-playlists-btn').addEventListener('click', () => {
+                updateStatus('Refreshing playlists...');
+                loadPlaylists();
+            });
+            
+            // Initialize
+            loadPlaylists();
+            
+            // Check status
+            fetch('/api/status')
+                .then(response => response.json())
+                .then(data => {
+                    if (data.success) {
+                        updatePlaybackStatus(data.status);
+                    }
+                })
+                .catch(error => {
+                    console.error('Error getting status:', error);
+                });
+                
+            // Load available media files
+            fetch('/api/media')
+                .then(response => response.json())
+                .then(data => {
+                    if (data.success && data.files.length > 0) {
+                        const uploadStatus = document.getElementById('upload-status');
+                        uploadStatus.innerHTML = '<h6>Available Media Files:</h6><ul class="list-group">';
+                        
+                        data.files.forEach(file => {
+                            const fileSizeMB = (file.size / (1024 * 1024)).toFixed(2);
+                            uploadStatus.innerHTML += `
+                                <li class="list-group-item d-flex justify-content-between align-items-center">
+                                    ${file.filename} (${fileSizeMB} MB)
+                                    <div class="btn-group">
+                                        <button class="btn btn-sm btn-primary" onclick="playVideoInWebPlayer('${file.url}', '${file.filename}')">Play</button>
+                                        <button class="btn btn-sm btn-success" onclick="addToPlaylistFromUpload(prompt('Enter playlist name:'), '${file.url}', '${file.filename}')">Add to Playlist</button>
+                                    </div>
+                                </li>`;
+                        });
+                        
+                        uploadStatus.innerHTML += '</ul>';
+                    }
+                })
+                .catch(error => {
+                    console.error('Error loading media files:', error);
+                });
+                
+            // Add event listener for video player ended event to play next track
+            document.getElementById('video-player').addEventListener('ended', function() {
+                if (playbackMode === 'web') {
+                    fetch('/api/next', { method: 'POST' })
+                        .catch(error => {
+                            console.error('Error playing next track:', error);
+                        });
+                }
+            });
+        });
+    </script>
+</body>
+</html>

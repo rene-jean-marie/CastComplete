@@ -1,0 +1,4 @@
+/* Hide element by default, similar to Bootstrap's d-none */
+.d-none {
+    display: none !important;
+}
