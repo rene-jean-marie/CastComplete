@@ -12,7 +12,7 @@ from typing import Dict, List, Optional, Any, Tuple, Union
 # External dependencies
 import pychromecast
 from pychromecast.controllers.media import MediaController
-from pychromecast.discovery import CastBrowser
+from pychromecast.discovery import CastBrowser, SimpleCastListener
 import zeroconf
 
 class DeviceManager:
@@ -59,8 +59,10 @@ class DeviceManager:
                 
             # Use CastBrowser for discovery instead of deprecated discover_chromecasts
             print("Discovering Chromecast services...")
-            browser = CastBrowser()
-            browser.start_discovery(self.zeroconf)
+            # Create a simple listener that will collect the chromecasts
+            listener = SimpleCastListener()
+            browser = CastBrowser(listener, self.zeroconf)
+            browser.start_discovery()
             
             # Give it time to discover all devices
             time.sleep(3)
@@ -68,10 +70,10 @@ class DeviceManager:
             # Get the discovered devices
             print("Getting discovered Chromecasts...")
             browser.stop_discovery()
-            chromecasts = browser.devices
+            chromecasts = list(browser.devices.values())
             
-            # Extract device names
-            devices = [cast.device.friendly_name for cast in chromecasts]
+            # Extract device names - CastInfo objects have friendly_name as direct attribute
+            devices = [cast.friendly_name for cast in chromecasts if cast.friendly_name]
             print(f"Discovered {len(devices)} Chromecast devices: {devices}")
             
             # Add any web clients
@@ -125,15 +127,32 @@ class DeviceManager:
             if not self.zeroconf:
                 self.zeroconf = zeroconf.Zeroconf()
                 
-            # Get list of chromecasts
-            chromecasts = pychromecast.get_listed_chromecasts(friendly_names=[device_name], 
-                                                              zeroconf_instance=self.zeroconf)
+            # Use CastBrowser to find the device
+            listener = SimpleCastListener()
+            browser = CastBrowser(listener, self.zeroconf)
+            browser.start_discovery()
             
-            if not chromecasts[0]:
+            # Give it time to discover devices
+            time.sleep(3)
+            browser.stop_discovery()
+            
+            # Check if we found the requested device
+            found_device = None
+            for uuid, cast_info in browser.devices.items():
+                if cast_info.friendly_name == device_name:
+                    found_device = cast_info
+                    break
+            
+            if not found_device:
                 print(f"Device {device_name} not found")
                 return False
-                
-            cast = chromecasts[0][0]
+            
+            # Create a Chromecast object from the found device
+            cast = pychromecast.Chromecast(
+                host=found_device.host,
+                port=found_device.port,
+                zconf=self.zeroconf
+            )
             cast.wait()
             
             # Store the device

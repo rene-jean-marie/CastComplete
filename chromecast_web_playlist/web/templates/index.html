@@ -65,8 +65,18 @@
                 user-select: none;
             }
             
-            #discover-btn, #register-client-btn {
-                /* Ensure these buttons are always enabled and visible */
+            /* Ensure discover button is always visible */
+            #discover-btn {
+                opacity: 1 !important;
+                pointer-events: auto !important;
+                cursor: pointer !important;
+                display: inline-block !important;
+                background-color: var(--bs-primary) !important;
+                color: white !important;
+            }
+            
+            /* Make register button visible but respect the d-none class */
+            #register-client-btn:not(.d-none) {
                 opacity: 1 !important;
                 pointer-events: auto !important;
                 cursor: pointer !important;
