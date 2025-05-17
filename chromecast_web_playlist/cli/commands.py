@@ -125,11 +125,16 @@ class CLI:
         prev_parser.add_argument("--device", help="Target device")
         prev_parser.add_argument("--group", help="Target device group")
         
-        # Web server command
+        # Web server commands
         server_parser = subparsers.add_parser("server", help="Start the web server")
-        server_parser.add_argument("--host", default="0.0.0.0", help="Host to bind to")
-        server_parser.add_argument("--port", type=int, default=5001, help="Port to bind to")
+        server_parser.add_argument("--host", default="0.0.0.0", help="Host to bind the server to")
+        server_parser.add_argument("--port", type=int, default=5001, help="Port to bind the server to")
         server_parser.add_argument("--debug", action="store_true", help="Run in debug mode")
+        
+        restart_server_parser = subparsers.add_parser("restart-server", help="Restart the web server")
+        restart_server_parser.add_argument("--host", default="0.0.0.0", help="Host to bind the server to")
+        restart_server_parser.add_argument("--port", type=int, default=5001, help="Port to bind the server to")
+        restart_server_parser.add_argument("--debug", action="store_true", help="Run in debug mode")
         
         return parser
         
@@ -409,9 +414,39 @@ class CLI:
             else:
                 print("Failed to play previous track")
                 
-        # Web server command
+        # Web server commands
         elif args.command == "server":
             from ..web import run_server
+            print(f"Starting web server on {args.host}:{args.port}")
+            run_server(args.host, args.port, args.debug)
+        
+        elif args.command == "restart-server":
+            import os
+            import signal
+            import psutil
+            import subprocess
+            import time
+            from ..web import run_server
+            
+            # Look for existing server processes
+            server_found = False
+            for proc in psutil.process_iter(['pid', 'name', 'cmdline']):
+                try:
+                    cmdline = proc.info['cmdline']
+                    if cmdline and len(cmdline) > 1:
+                        if 'chromecast-server' in ' '.join(cmdline) or 'chromecast_web_playlist.web.server' in ' '.join(cmdline):
+                            print(f"Found existing server process (PID: {proc.info['pid']}), stopping it...")
+                            os.kill(proc.info['pid'], signal.SIGTERM)
+                            server_found = True
+                            # Give it a moment to stop
+                            time.sleep(1)
+                except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
+                    pass
+            
+            if not server_found:
+                print("No running server found to restart")
+                
+            # Start a new server
             print(f"Starting web server on {args.host}:{args.port}")
             run_server(args.host, args.port, args.debug)
             

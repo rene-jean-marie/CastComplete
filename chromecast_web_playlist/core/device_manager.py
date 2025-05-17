@@ -12,6 +12,7 @@ from typing import Dict, List, Optional, Any, Tuple, Union
 # External dependencies
 import pychromecast
 from pychromecast.controllers.media import MediaController
+from pychromecast.discovery import CastBrowser
 import zeroconf
 
 class DeviceManager:
@@ -56,21 +57,18 @@ class DeviceManager:
             if not self.zeroconf:
                 self.zeroconf = zeroconf.Zeroconf()
                 
-            # First, discover services
+            # Use CastBrowser for discovery instead of deprecated discover_chromecasts
             print("Discovering Chromecast services...")
-            services, browser = pychromecast.discovery.discover_chromecasts(
-                zeroconf_instance=self.zeroconf)
+            browser = CastBrowser()
+            browser.start_discovery(self.zeroconf)
             
             # Give it time to discover all devices
             time.sleep(3)
             
             # Get the discovered devices
             print("Getting discovered Chromecasts...")
-            chromecasts, browser = pychromecast.get_listed_chromecasts(
-                friendly_names=None, 
-                uuids=None, 
-                discovery_timeout=20,  # Increased timeout for better discovery
-                zeroconf_instance=self.zeroconf)
+            browser.stop_discovery()
+            chromecasts = browser.devices
             
             # Extract device names
             devices = [cast.device.friendly_name for cast in chromecasts]
