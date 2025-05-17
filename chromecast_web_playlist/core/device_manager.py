@@ -14,6 +14,7 @@ import pychromecast
 from pychromecast.controllers.media import MediaController
 from pychromecast.discovery import CastBrowser, SimpleCastListener
 import zeroconf
+import asyncio
 
 class DeviceManager:
     """
@@ -57,23 +58,24 @@ class DeviceManager:
             if not self.zeroconf:
                 self.zeroconf = zeroconf.Zeroconf()
                 
-            # Use CastBrowser for discovery instead of deprecated discover_chromecasts
+            # Use pychromecast.get_chromecasts instead of CastBrowser directly
+            # This handles the event loop properly
             print("Discovering Chromecast services...")
-            # Create a simple listener that will collect the chromecasts
-            listener = SimpleCastListener()
-            browser = CastBrowser(listener, self.zeroconf)
-            browser.start_discovery()
             
-            # Give it time to discover all devices
-            time.sleep(3)
+            # Use pychromecast's high-level discovery function that handles the event loop
+            # This is an alternative to using CastBrowser directly
+            chromecasts, browser = pychromecast.get_chromecasts(
+                tries=2,  # Number of retries
+                retry_wait=2,  # Seconds between retries
+                timeout=5,  # Discovery timeout
+                zeroconf_instance=self.zeroconf
+            )
             
-            # Get the discovered devices
-            print("Getting discovered Chromecasts...")
-            browser.stop_discovery()
-            chromecasts = list(browser.devices.values())
+            print(f"Getting discovered Chromecasts...")
+            # No need to stop discovery as get_chromecasts handles this
             
-            # Extract device names - CastInfo objects have friendly_name as direct attribute
-            devices = [cast.friendly_name for cast in chromecasts if cast.friendly_name]
+            # Extract device names from Chromecast objects
+            devices = [cast.device.friendly_name for cast in chromecasts if cast.device]
             print(f"Discovered {len(devices)} Chromecast devices: {devices}")
             
             # Add any web clients
@@ -127,32 +129,24 @@ class DeviceManager:
             if not self.zeroconf:
                 self.zeroconf = zeroconf.Zeroconf()
                 
-            # Use CastBrowser to find the device
-            listener = SimpleCastListener()
-            browser = CastBrowser(listener, self.zeroconf)
-            browser.start_discovery()
+            # Use high-level function to get the device
+            chromecasts, browser = pychromecast.get_chromecasts(
+                tries=2,
+                retry_wait=2,
+                timeout=5,
+                zeroconf_instance=self.zeroconf
+            )
             
-            # Give it time to discover devices
-            time.sleep(3)
-            browser.stop_discovery()
-            
-            # Check if we found the requested device
-            found_device = None
-            for uuid, cast_info in browser.devices.items():
-                if cast_info.friendly_name == device_name:
-                    found_device = cast_info
+            # Find the requested device
+            cast = None
+            for cc in chromecasts:
+                if cc.device.friendly_name == device_name:
+                    cast = cc
                     break
             
-            if not found_device:
+            if not cast:
                 print(f"Device {device_name} not found")
                 return False
-            
-            # Create a Chromecast object from the found device
-            cast = pychromecast.Chromecast(
-                host=found_device.host,
-                port=found_device.port,
-                zconf=self.zeroconf
-            )
             cast.wait()
             
             # Store the device

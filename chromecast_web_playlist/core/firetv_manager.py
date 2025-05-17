@@ -8,7 +8,11 @@ import os
 import time
 import logging
 import socket
+import ipaddress
 import yaml
+import re
+import subprocess
+import threading
 from typing import Dict, List, Optional, Any, Tuple, Union
 from pathlib import Path
 import asyncio
@@ -76,6 +80,189 @@ class FireTVManager:
             List of device names
         """
         return list(self.saved_devices.keys())
+        
+    def scan_network(self, network: str = None, timeout: int = 2) -> List[Dict[str, Any]]:
+        """
+        Scan the network for potential Fire TV devices.
+        
+        Args:
+            network: Network to scan (e.g. '192.168.1.0/24')
+            timeout: Timeout for ADB connection attempts in seconds
+            
+        Returns:
+            List of dictionaries containing device information
+        """
+        # If no network is specified, try to determine the local network
+        if not network:
+            network = self._get_local_network()
+            
+        if not network:
+            logger.error("Could not determine local network, please specify network parameter")
+            return []
+            
+        logger.info(f"Scanning network {network} for Fire TV devices...")
+        
+        # Get list of live IPs on the network
+        live_ips = self._scan_for_live_ips(network)
+        logger.info(f"Found {len(live_ips)} active IP addresses")
+        
+        # Check each IP to see if it's a Fire TV device
+        results = []
+        threads = []
+        lock = threading.Lock()
+        
+        def check_ip(ip):
+            try:
+                # Try to connect via ADB to the standard port
+                logger.debug(f"Checking {ip} for Fire TV...")
+                
+                # First check if port 5555 is open (ADB)
+                sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                sock.settimeout(timeout)
+                result = sock.connect_ex((ip, 5555))
+                sock.close()
+                
+                if result != 0:
+                    # Port is not open, not likely a Fire TV
+                    return
+                
+                # Try to get device name
+                try:
+                    # Try to get device name via hostname resolution first
+                    name = socket.getfqdn(ip).split('.')[0]
+                    if name == ip:  # If hostname resolution failed, use generic name
+                        name = f"FireTV-{ip.split('.')[-1]}"
+                except Exception:
+                    name = f"FireTV-{ip.split('.')[-1]}"
+                
+                # Check if this IP is already in saved devices
+                existing_device = None
+                for device_name, device_info in self.saved_devices.items():
+                    if device_info.get('host') == ip:
+                        existing_device = device_name
+                        break
+                
+                device_info = {
+                    'ip': ip,
+                    'name': name,
+                    'port': 5555,
+                    'saved': existing_device is not None,
+                    'saved_name': existing_device
+                }
+                
+                with lock:
+                    results.append(device_info)
+                    logger.info(f"Found potential Fire TV device at {ip}")
+            except Exception as e:
+                logger.debug(f"Error checking {ip}: {e}")
+        
+        # Start a thread for each IP check
+        for ip in live_ips:
+            thread = threading.Thread(target=check_ip, args=(ip,))
+            thread.daemon = True
+            threads.append(thread)
+            thread.start()
+            
+        # Wait for all threads to complete (or timeout)
+        for thread in threads:
+            thread.join(timeout * 2)  # Double the timeout for thread join
+            
+        return results
+    
+    def _get_local_network(self) -> Optional[str]:
+        """
+        Try to determine the local network.
+        
+        Returns:
+            Network in CIDR notation (e.g. '192.168.1.0/24') or None if unsuccessful
+        """
+        try:
+            # Create a socket to determine local IP
+            s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            # Doesn't need to be reachable
+            s.connect(('8.8.8.8', 1))
+            local_ip = s.getsockname()[0]
+            s.close()
+            
+            # Assume /24 subnet
+            network_parts = local_ip.split('.')
+            network = f"{network_parts[0]}.{network_parts[1]}.{network_parts[2]}.0/24"
+            
+            return network
+        except Exception as e:
+            logger.error(f"Error determining local network: {e}")
+            return None
+    
+    def _scan_for_live_ips(self, network: str) -> List[str]:
+        """
+        Scan the network for live IP addresses.
+        
+        Args:
+            network: Network to scan in CIDR notation
+            
+        Returns:
+            List of live IP addresses
+        """
+        live_ips = []
+        
+        try:
+            # Parse the network
+            ip_network = ipaddress.ip_network(network)
+            
+            # Convert network to a list of hosts
+            hosts = list(ip_network.hosts())
+            
+            # If the network is too large, limit the scan
+            if len(hosts) > 256:
+                logger.warning(f"Network {network} too large, limiting scan to first 256 addresses")
+                hosts = hosts[:256]
+            
+            # Use ping to check which hosts are alive
+            logger.info(f"Scanning {len(hosts)} IP addresses...")
+            
+            # Use threading to speed up the scan
+            threads = []
+            lock = threading.Lock()
+            
+            def ping_host(ip):
+                try:
+                    # Try a quick socket connection first on port 5555 (ADB)
+                    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                    sock.settimeout(0.5)  # Quick timeout
+                    ip_str = str(ip)
+                    result = sock.connect_ex((ip_str, 5555))
+                    sock.close()
+                    
+                    if result == 0:  # Port 5555 is open
+                        with lock:
+                            live_ips.append(ip_str)
+                            logger.debug(f"Found device with open ADB port at {ip_str}")
+                except Exception:
+                    pass
+            
+            # Start a thread for each IP
+            for ip in hosts:
+                thread = threading.Thread(target=ping_host, args=(ip,))
+                thread.daemon = True
+                threads.append(thread)
+                thread.start()
+                
+                # Limit number of concurrent threads
+                if len(threads) >= 50:
+                    for t in threads:
+                        t.join(0.1)  # Join with a small timeout
+                    threads = [t for t in threads if t.is_alive()]  # Keep only alive threads
+            
+            # Wait for all remaining threads
+            for thread in threads:
+                thread.join(1)
+            
+            logger.info(f"Found {len(live_ips)} devices with open ADB port")
+            return live_ips
+            
+        except Exception as e:
+            logger.error(f"Error scanning network: {e}")
+            return []
     
     def save_device(self, name: str, host: str, port: int = 5555) -> bool:
         """

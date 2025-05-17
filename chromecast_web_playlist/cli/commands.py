@@ -8,9 +8,11 @@ import os
 import sys
 import argparse
 import logging
+import time
 from typing import Dict, List, Optional, Any, Union
 
 from ..core.chromecast_manager import ChromecastManager
+from ..core.firetv_manager import FireTVManager
 from ..extractors.media_extractor import extract_media, extract_x_feed
 
 # Configure logging
@@ -25,6 +27,7 @@ class CLI:
     def __init__(self):
         """Initialize the CLI."""
         self.chromecast_manager = ChromecastManager()
+        self.firetv_manager = FireTVManager()
         self.parser = self._create_parser()
         
     def _create_parser(self):
@@ -143,6 +146,63 @@ class CLI:
         restart_parser.add_argument("--host", default="0.0.0.0", help="Host to bind the server to")
         restart_parser.add_argument("--port", type=int, default=5001, help="Port to bind the server to")
         restart_parser.add_argument("--debug", action="store_true", help="Run in debug mode")
+        
+        # Fire TV commands
+        firetv_parser = subparsers.add_parser("firetv", help="Fire TV device management")
+        firetv_subparsers = firetv_parser.add_subparsers(dest="firetv_command", help="Fire TV command")
+        
+        # Fire TV list devices command
+        firetv_list_parser = firetv_subparsers.add_parser("list", help="List saved Fire TV devices")
+        
+        # Fire TV discover command
+        firetv_discover_parser = firetv_subparsers.add_parser("discover", help="Discover Fire TV devices on the network")
+        firetv_discover_parser.add_argument("--network", help="Network to scan in CIDR notation (e.g. 192.168.1.0/24)")
+        firetv_discover_parser.add_argument("--timeout", type=int, default=2, help="Timeout for scanning in seconds (default: 2)")
+        
+        # Fire TV add device command
+        firetv_add_parser = firetv_subparsers.add_parser("add", help="Add a new Fire TV device")
+        firetv_add_parser.add_argument("name", help="Friendly name for the device")
+        firetv_add_parser.add_argument("host", help="IP address of the device")
+        firetv_add_parser.add_argument("--port", type=int, default=5555, help="ADB port (default: 5555)")
+        
+        # Fire TV remove device command
+        firetv_remove_parser = firetv_subparsers.add_parser("remove", help="Remove a saved Fire TV device")
+        firetv_remove_parser.add_argument("name", help="Name of the device to remove")
+        
+        # Fire TV connect command
+        firetv_connect_parser = firetv_subparsers.add_parser("connect", help="Connect to a Fire TV device")
+        firetv_connect_parser.add_argument("name", help="Name of the device to connect to")
+        
+        # Fire TV disconnect command
+        firetv_disconnect_parser = firetv_subparsers.add_parser("disconnect", help="Disconnect from a Fire TV device")
+        firetv_disconnect_parser.add_argument("name", nargs="?", help="Name of the device to disconnect from (optional)")
+        
+        # Fire TV status command
+        firetv_status_parser = firetv_subparsers.add_parser("status", help="Get status of a Fire TV device")
+        firetv_status_parser.add_argument("name", nargs="?", help="Name of the device (optional)")
+        
+        # Fire TV media control commands
+        firetv_play_parser = firetv_subparsers.add_parser("play", help="Play media on Fire TV")
+        firetv_play_parser.add_argument("name", nargs="?", help="Target device name (optional)")
+        
+        firetv_pause_parser = firetv_subparsers.add_parser("pause", help="Pause media on Fire TV")
+        firetv_pause_parser.add_argument("name", nargs="?", help="Target device name (optional)")
+        
+        firetv_stop_parser = firetv_subparsers.add_parser("stop", help="Stop media on Fire TV")
+        firetv_stop_parser.add_argument("name", nargs="?", help="Target device name (optional)")
+        
+        firetv_next_parser = firetv_subparsers.add_parser("next", help="Skip to next media on Fire TV")
+        firetv_next_parser.add_argument("name", nargs="?", help="Target device name (optional)")
+        
+        firetv_previous_parser = firetv_subparsers.add_parser("previous", help="Go to previous media on Fire TV")
+        firetv_previous_parser.add_argument("name", nargs="?", help="Target device name (optional)")
+        
+        firetv_home_parser = firetv_subparsers.add_parser("home", help="Press home button on Fire TV")
+        firetv_home_parser.add_argument("name", nargs="?", help="Target device name (optional)")
+        
+        firetv_launch_parser = firetv_subparsers.add_parser("launch", help="Launch an app on Fire TV")
+        firetv_launch_parser.add_argument("app_id", help="Application ID to launch")
+        firetv_launch_parser.add_argument("--name", help="Target device name (optional)")
         
         return parser
         
@@ -474,6 +534,144 @@ class CLI:
                 # Start a new server
                 print(f"Starting web server on {args.host}:{args.port}")
                 run_server(args.host, args.port, args.debug)
+                
+        # Fire TV commands
+        elif args.command == "firetv":
+            if not hasattr(args, 'firetv_command') or not args.firetv_command:
+                print("Error: Please specify a Fire TV subcommand")
+                return
+            
+            # List saved Fire TV devices
+            if args.firetv_command == "list":
+                devices = self.firetv_manager.discover_devices()
+                if devices:
+                    print("Saved Fire TV devices:")
+                    for device in devices:
+                        print(f"  - {device}")
+                else:
+                    print("No saved Fire TV devices")
+            
+            # Discover Fire TV devices on the network
+            elif args.firetv_command == "discover":
+                print("Scanning network for Fire TV devices...")
+                network = args.network if hasattr(args, 'network') and args.network else None
+                timeout = args.timeout if hasattr(args, 'timeout') else 2
+                
+                devices = self.firetv_manager.scan_network(network, timeout)
+                
+                if devices:
+                    print(f"\nDiscovered {len(devices)} potential Fire TV devices:")
+                    print("-" * 60)
+                    print(f"{'IP Address':<15} {'Name':<25} {'Status':<10} {'Saved Name':<15}")
+                    print("-" * 60)
+                    
+                    for device in devices:
+                        status = "Saved" if device['saved'] else "New"
+                        saved_name = device['saved_name'] if device['saved'] else "-"
+                        print(f"{device['ip']:<15} {device['name']:<25} {status:<10} {saved_name:<15}")
+                    
+                    print("\nTo add a device, use: castcomplete firetv add <name> <ip>")
+                else:
+                    print("\nNo Fire TV devices found on the network.")
+                    print("Make sure your Fire TV devices have ADB debugging enabled.")
+                    print("You can manually add a device using: castcomplete firetv add <name> <ip>")
+                    
+                print("\nNote: Fire TV devices must have ADB debugging enabled in Settings > My Fire TV > Developer options")
+            
+            # Add a new Fire TV device
+            elif args.firetv_command == "add":
+                success = self.firetv_manager.save_device(
+                    args.name, args.host, args.port)
+                if success:
+                    print(f"Added Fire TV device: {args.name}")
+                else:
+                    print(f"Failed to add Fire TV device: {args.name}")
+            
+            # Remove a saved Fire TV device
+            elif args.firetv_command == "remove":
+                success = self.firetv_manager.remove_device(args.name)
+                if success:
+                    print(f"Removed Fire TV device: {args.name}")
+                else:
+                    print(f"Failed to remove Fire TV device: {args.name}")
+            
+            # Connect to a Fire TV device
+            elif args.firetv_command == "connect":
+                success = self.firetv_manager.connect(args.name)
+                if success:
+                    print(f"Connected to Fire TV device: {args.name}")
+                else:
+                    print(f"Failed to connect to Fire TV device: {args.name}")
+            
+            # Disconnect from a Fire TV device
+            elif args.firetv_command == "disconnect":
+                success = self.firetv_manager.disconnect(args.name)
+                if success:
+                    if args.name:
+                        print(f"Disconnected from Fire TV device: {args.name}")
+                    else:
+                        print("Disconnected from all Fire TV devices")
+                else:
+                    print(f"Failed to disconnect from Fire TV device")
+            
+            # Get status of a Fire TV device
+            elif args.firetv_command == "status":
+                status = self.firetv_manager.get_status(args.name)
+                if "error" not in status:
+                    print(f"Fire TV status: {status}")
+                else:
+                    print(f"Error getting status: {status['error']}")
+            
+            # Fire TV media control commands
+            elif args.firetv_command == "play":
+                success = self.firetv_manager.play(args.name)
+                if success:
+                    print("Play command sent successfully")
+                else:
+                    print("Failed to send play command")
+            
+            elif args.firetv_command == "pause":
+                success = self.firetv_manager.pause(args.name)
+                if success:
+                    print("Pause command sent successfully")
+                else:
+                    print("Failed to send pause command")
+            
+            elif args.firetv_command == "stop":
+                success = self.firetv_manager.stop(args.name)
+                if success:
+                    print("Stop command sent successfully")
+                else:
+                    print("Failed to send stop command")
+            
+            elif args.firetv_command == "next":
+                success = self.firetv_manager.next(args.name)
+                if success:
+                    print("Next command sent successfully")
+                else:
+                    print("Failed to send next command")
+            
+            elif args.firetv_command == "previous":
+                success = self.firetv_manager.previous(args.name)
+                if success:
+                    print("Previous command sent successfully")
+                else:
+                    print("Failed to send previous command")
+            
+            elif args.firetv_command == "home":
+                success = self.firetv_manager.home(args.name)
+                if success:
+                    print("Home button pressed successfully")
+                else:
+                    print("Failed to send home command")
+            
+            elif args.firetv_command == "launch":
+                device_name = args.name if hasattr(args, 'name') else None
+                success = self.firetv_manager.launch_app(args.app_id, device_name)
+                if success:
+                    print(f"Launched app: {args.app_id}")
+                else:
+                    print(f"Failed to launch app: {args.app_id}")
             
 def main():
     """Main entry point for the CLI."""

@@ -18,8 +18,9 @@ from urllib.parse import urlparse
 from flask import Flask, render_template, request, jsonify, send_from_directory, Response
 from flask_socketio import SocketIO, emit
 
-# Import the ChromecastManager
+# Import the managers
 from ..core.chromecast_manager import ChromecastManager
+from ..core.firetv_manager import FireTVManager
 
 # Configure logging
 logging.basicConfig(
@@ -33,7 +34,7 @@ class WebServer:
     Flask web server for the Chromecast Web Playlist Manager.
     """
     
-    def __init__(self, chromecast_manager: ChromecastManager, host: str = '0.0.0.0', port: int = 5001):
+    def __init__(self, chromecast_manager: ChromecastManager, host: str = '0.0.0.0', port: int = 5001, firetv_manager: Optional[FireTVManager] = None):
         """
         Initialize the WebServer.
         
@@ -41,8 +42,10 @@ class WebServer:
             chromecast_manager: ChromecastManager instance
             host: Host to bind the server to
             port: Port to bind the server to
+            firetv_manager: Optional FireTVManager instance
         """
         self.chromecast_manager = chromecast_manager
+        self.firetv_manager = firetv_manager or FireTVManager()
         self.host = host
         self.port = port
         
@@ -97,7 +100,8 @@ class WebServer:
         # API routes
         from .api import register_api_routes
         register_api_routes(self.app, self.chromecast_manager, self.playback_status, 
-                           self.static_dir, self.templates_dir, self.downloads_dir, self.media_dir)
+                           self.static_dir, self.templates_dir, self.downloads_dir, self.media_dir,
+                           self.firetv_manager)
                            
     def _register_socketio_events(self):
         """Register Socket.IO events."""
@@ -145,7 +149,7 @@ class WebServer:
         except Exception as e:
             logger.error(f"Error running web server: {e}")
             
-def create_server(chromecast_manager: ChromecastManager = None, host: str = '0.0.0.0', port: int = 5001) -> WebServer:
+def create_server(chromecast_manager: ChromecastManager = None, host: str = '0.0.0.0', port: int = 5001, firetv_manager: FireTVManager = None):
     """
     Create a web server instance.
     
@@ -153,6 +157,7 @@ def create_server(chromecast_manager: ChromecastManager = None, host: str = '0.0
         chromecast_manager: ChromecastManager instance (optional)
         host: Host to bind the server to
         port: Port to bind the server to
+        firetv_manager: FireTVManager instance (optional)
         
     Returns:
         WebServer instance
@@ -160,7 +165,10 @@ def create_server(chromecast_manager: ChromecastManager = None, host: str = '0.0
     if chromecast_manager is None:
         chromecast_manager = ChromecastManager()
         
-    return WebServer(chromecast_manager, host, port)
+    if firetv_manager is None:
+        firetv_manager = FireTVManager()
+        
+    return WebServer(chromecast_manager, host, port, firetv_manager)
     
 def run_server(host: str = '0.0.0.0', port: int = 5001, debug: bool = True):
     """
