@@ -97,6 +97,38 @@ class WebServer:
             """Render the main page"""
             return render_template('index.html')
             
+        # Server control route - allows stopping the server remotely
+        @self.app.route('/api/admin/server/control', methods=['POST'])
+        def server_control():
+            """Control the server remotely"""
+            if not request.is_json:
+                return jsonify({'success': False, 'error': 'Request must be JSON'}), 400
+                
+            data = request.json
+            action = data.get('action')
+            secret = data.get('secret')
+            
+            # Simple security check - should be enhanced in production
+            # The secret is just 'castcomplete' for demonstration
+            if secret != 'castcomplete':
+                return jsonify({'success': False, 'error': 'Invalid authentication'}), 403
+                
+            if action == 'stop':
+                # Schedule server shutdown after response is sent
+                def shutdown_server():
+                    import os
+                    import signal
+                    import time
+                    logger.info('Server shutdown requested via API')
+                    time.sleep(1)  # Brief delay to allow response to be sent
+                    os.kill(os.getpid(), signal.SIGTERM)
+                
+                from threading import Thread
+                Thread(target=shutdown_server).start()
+                return jsonify({'success': True, 'message': 'Server shutdown initiated'})
+            else:
+                return jsonify({'success': False, 'error': f'Unknown action: {action}'}), 400
+            
         # API routes
         from .api import register_api_routes
         register_api_routes(self.app, self.chromecast_manager, self.playback_status, 
